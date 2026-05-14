@@ -326,6 +326,40 @@ RGBA flattenRGB(uint8_t r, uint8_t g, uint8_t b, uint8_t a, uint8_t f) {
 	return RGBA(r / f * f, g / f * f, b / f * f, a);
 }
 
+RGBA adjustSaturation(RGBA rgba, float saturation) {
+	if (saturation <= 0.0f) {
+		const uint8_t gray = (uint8_t)((float)rgba.r * 0.2126f + (float)rgba.g * 0.7152f + (float)rgba.b * 0.0722f);
+		return RGBA(gray, gray, gray, rgba.a);
+	}
+	float h, s, b;
+	getHSB(rgba, h, s, b);
+	s = glm::min(s * saturation, 1.0f);
+	return fromHSB(h, s, b, (float)rgba.a / 255.0f);
+}
+
+RGBA posterizeHSB(RGBA rgba, int stepsH, int stepsS, int stepsB) {
+	if (stepsH <= 0 && stepsS <= 0 && stepsB <= 0) {
+		return rgba;
+	}
+	float h, s, b;
+	getHSB(rgba, h, s, b);
+	if (stepsH > 1) {
+		const float stepSize = 1.0f / (float)stepsH;
+		h = glm::round(h / stepSize) * stepSize;
+	}
+	if (stepsS > 1) {
+		const float stepSize = 1.0f / (float)(stepsS - 1);
+		s = glm::round(s / stepSize) * stepSize;
+		s = glm::clamp(s, 0.0f, 1.0f);
+	}
+	if (stepsB > 1) {
+		const float stepSize = 1.0f / (float)(stepsB - 1);
+		b = glm::round(b / stepSize) * stepSize;
+		b = glm::clamp(b, 0.0f, 1.0f);
+	}
+	return fromHSB(h, s, b, (float)rgba.a / 255.0f);
+}
+
 void getCIELab(RGBA color, float &L, float &a, float &b) {
 	getCIELab(fromRGBA(color), L, a, b);
 }

@@ -82,7 +82,7 @@ inline void subdivide(const MESHTRI &in, MESHTRI out[4]) {
 		MESHTRI{{midv[0], midv[1], midv[2]}, {miduv[0], miduv[1], miduv[2]}, in.materialIdx, {midc[0], midc[1], midc[2]}};
 }
 
-inline color::RGBA colorAt(const MeshTri &tri, const MeshMaterialArray &meshMaterialArray, const glm::vec2 &uv, bool originUpperLeft = false) {
+inline color::RGBA colorAt(const MeshTri &tri, const MeshMaterialArray &meshMaterialArray, const glm::vec2 &uv) {
 	MeshMaterial* material;
 	if (tri.materialIdx >= 0 && tri.materialIdx < (int)meshMaterialArray.size()) {
 		material = meshMaterialArray[tri.materialIdx].get();
@@ -90,7 +90,7 @@ inline color::RGBA colorAt(const MeshTri &tri, const MeshMaterialArray &meshMate
 		material = nullptr;
 	}
 	color::RGBA rgba;
-	if (material && material->colorAt(rgba, uv, originUpperLeft)) {
+	if (material && material->colorAt(rgba, uv, material->originUpperLeft)) {
 		return rgba;
 	}
 

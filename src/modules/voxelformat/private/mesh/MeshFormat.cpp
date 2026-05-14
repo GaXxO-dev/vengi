@@ -9,6 +9,7 @@
 #include "core/GLM.h"
 #include "core/Log.h"
 #include "color/RGBA.h"
+#include "color/Distance.h"
 #include "core/StringUtil.h"
 #include "core/UUID.h"
 #include "core/Var.h"
@@ -45,6 +46,8 @@ namespace voxelformat {
 
 MeshFormat::MeshFormat() {
 	_weightedAverage = core::getVar(cfg::VoxformatRGBWeightedAverage)->boolVal();
+	const int distanceMode = core::getVar(cfg::VoxformatPaletteMatchDistance)->intVal();
+	_paletteDistance = distanceMode == 1 ? color::Distance::HSB : color::Distance::Approximation;
 }
 
 MeshFormat::ChunkMeshExt *MeshFormat::getParent(const scenegraph::SceneGraph &sceneGraph, MeshFormat::ChunkMeshes &meshes,
@@ -423,7 +426,7 @@ int MeshFormat::voxelizeNodeChunked(const core::String &name, scenegraph::SceneG
 	};
 
 	const int totalChunks = (int)chunkCoords.size();
-	palette::PaletteLookup palLookup(palette);
+	palette::PaletteLookup palLookup(palette, _paletteDistance);
 
 	scenegraph::SceneGraphNode groupNode(scenegraph::SceneGraphNodeType::Group);
 	groupNode.setName(name);
@@ -652,7 +655,7 @@ int MeshFormat::voxelizeNode(const core::UUID &uuid, const core::String &name, s
 		}
 
 		Log::debug("create voxels from %i tris", (int)tris.size());
-		palette::PaletteLookup palLookup(palette);
+		palette::PaletteLookup palLookup(palette, _paletteDistance);
 		node.createVolume(region);
 		voxel::RawVolumeWrapper wrapper(node.volume());
 		palette::NormalPaletteLookup normalLookup(normalPalette);
@@ -807,7 +810,7 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 
 	Log::debug("create voxels for %i positions", (int)posMap.size());
 	voxel::RawVolume *volume = node.volume();
-	palette::PaletteLookup palLookup(palette);
+	palette::PaletteLookup palLookup(palette, _paletteDistance);
 	auto fn = [&palette, volume, &palLookup, this](int idx, const PosSampling &posSampling) {
 		if (stopExecution()) {
 			return;
@@ -1011,7 +1014,7 @@ int MeshFormat::voxelizePointCloud(const core::String &filename, scenegraph::Sce
 
 	voxel::RawVolume *v = new voxel::RawVolume(region);
 	const palette::Palette &palette = voxel::getPalette();
-	palette::PaletteLookup palLookup(palette);
+	palette::PaletteLookup palLookup(palette, _paletteDistance);
 	auto fn = [&vertices, &palLookup, &palette, pointSize, v](int start, int end) {
 		for (int i = start; i < end; ++i) {
 			if (stopExecution()) {

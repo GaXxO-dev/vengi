@@ -33,6 +33,7 @@ TEST_F(MeshTriTest, testColorAt4x4) {
 		voxelformat::MeshTri meshTri;
 		MeshMaterialArray meshMaterialArray;
 		meshMaterialArray.emplace_back(createMaterial(texture));
+		meshMaterialArray.back()->originUpperLeft = originUpperLeft;
 		meshTri.materialIdx = meshMaterialArray.size() - 1;
 		for (int x = 0; x < w; ++x) {
 			for (int y = 0; y < h; ++y) {
@@ -40,7 +41,7 @@ TEST_F(MeshTriTest, testColorAt4x4) {
 							  image::Image::uv(x, y + 1, w, h, originUpperLeft),
 							  image::Image::uv(x + 1, y, w, h, originUpperLeft));
 				const glm::vec2 &uv = meshTri.centerUV();
-				const color::RGBA color = colorAt(meshTri, meshMaterialArray, uv, originUpperLeft);
+				const color::RGBA color = colorAt(meshTri, meshMaterialArray, uv);
 				const int texIndex = y * w + x;
 				ASSERT_EQ(buffer[texIndex], color)
 					<< "pixel(" << x << "/" << y << "), " << color::print(buffer[texIndex]) << " vs "
@@ -48,6 +49,28 @@ TEST_F(MeshTriTest, testColorAt4x4) {
 			}
 		}
 	}
+}
+
+TEST_F(MeshTriTest, testColorAtOriginUpperLeftPropagation) {
+	constexpr int h = 2;
+	constexpr int w = 2;
+	constexpr color::RGBA buffer[w * h]{
+		{255, 0, 0, 255}, {0, 255, 0, 255},
+		{0, 0, 255, 255}, {255, 255, 0, 255}};
+	const image::ImagePtr &texture = image::createEmptyImage("2x2");
+	texture->loadRGBA((const uint8_t *)buffer, w, h);
+	ASSERT_TRUE(texture);
+
+	voxelformat::MeshTri meshTri;
+	MeshMaterialArray meshMaterialArray;
+	meshMaterialArray.emplace_back(createMaterial(texture));
+	meshMaterialArray.back()->originUpperLeft = true;
+	meshTri.materialIdx = 0;
+
+	meshTri.setUVs(glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 0.0f), glm::vec2(0.0f, 1.0f));
+	const glm::vec2 uv = meshTri.centerUV();
+	const color::RGBA color = colorAt(meshTri, meshMaterialArray, uv);
+	ASSERT_EQ(buffer[0], color) << "originUpperLeft=true should sample pixel at row 0 (top)";
 }
 
 } // namespace voxelformat

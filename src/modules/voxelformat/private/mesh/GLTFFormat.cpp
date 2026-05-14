@@ -108,6 +108,7 @@ MeshMaterialPtr GLTFFormat::loadMaterial(const cgltf_data *data, const cgltf_mat
 	core::String name = mat->name ? mat->name : "default";
 	MeshMaterialPtr meshMat = createMaterial(name);
 	palette::Material &palMat = meshMat->material;
+	meshMat->originUpperLeft = true;
 
 	if (mat->has_pbr_metallic_roughness) {
 		const cgltf_pbr_metallic_roughness &pbr = mat->pbr_metallic_roughness;

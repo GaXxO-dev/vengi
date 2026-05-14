@@ -4,6 +4,7 @@
 
 #include "PosSampling.h"
 #include "color/ColorUtil.h"
+#include "core/GLM.h"
 
 namespace voxelformat {
 
@@ -39,27 +40,16 @@ MeshMaterialIndex PosSampling::getMaterialIndex() const {
 }
 
 bool PosSampling::add(uint32_t area, color::RGBA color, uint8_t normal, MeshMaterialIndex materialIdx) {
-	// TODO: VOXELFORMAT: why?
-	if (entries[0].color == color) {
-		return false;
-	}
 	if (area == 0) {
-		// nothing to contribute
 		return false;
 	}
-#if 0
 	for (int i = 0; i < MaxTriangleColorContributions; ++i) {
-		// same values only increase the area of contribution and thus the weighting influence for this color
 		if (entries[i].area > 0 && entries[i].color == color && entries[i].normal == normal) {
 			entries[i].area += area;
 			return true;
 		}
 	}
-#endif
-
-#if 1
 	for (int i = 0; i < MaxTriangleColorContributions; ++i) {
-		// free slot
 		if (entries[i].area == 0) {
 			entries[i].area = area;
 			entries[i].color = color;
@@ -68,33 +58,6 @@ bool PosSampling::add(uint32_t area, color::RGBA color, uint8_t normal, MeshMate
 			return true;
 		}
 	}
-#else
-	int smallestArea = 0xffffffff;
-	int index = 0;
-	for (int i = 0; i < MaxTriangleColorContributions; ++i) {
-		// free slot
-		if (entries[i].area == 0) {
-			entries[i].area = area;
-			entries[i].color = color;
-			entries[i].normal = normal;
-			entries[i].materialIdx = materialIdx;
-			return true;
-		}
-		if (smallestArea > entries[i].area) {
-			smallestArea = entries[i].area;
-			index = i;
-		}
-	}
-	// check if this contribution should have a higher impact
-	if (entries[index].area < area) {
-		entries[index].area = area;
-		entries[index].color = color;
-		entries[index].normal = normal;
-		entries[index].materialIdx = materialIdx;
-		return true;
-	}
-#endif
-
 	return false;
 }
 
@@ -108,16 +71,23 @@ color::RGBA PosSampling::getColor(uint8_t flattenFactor, bool weightedAverage) c
 		for (const PosSamplingEntry &pe : entries) {
 			sumArea += pe.area;
 		}
-		color::RGBA color(0, 0, 0, 255);
 		if (sumArea == 0) {
-			return color;
+			return color::RGBA(0, 0, 0, 255);
 		}
+		float r = 0.0f, g = 0.0f, b = 0.0f, a = 0.0f;
+		const float invSumArea = 1.0f / (float)sumArea;
 		for (const PosSamplingEntry &pe : entries) {
 			if (pe.area == 0) {
 				break;
 			}
-			color = color::RGBA::mix(color, pe.color, (float)pe.area / (float)sumArea);
+			const float weight = (float)pe.area * invSumArea;
+			r += (float)pe.color.r * weight;
+			g += (float)pe.color.g * weight;
+			b += (float)pe.color.b * weight;
+			a += (float)pe.color.a * weight;
 		}
+		const color::RGBA color((uint8_t)glm::round(r), (uint8_t)glm::round(g),
+								 (uint8_t)glm::round(b), (uint8_t)glm::round(a));
 		return color::flattenRGB(color.r, color.g, color.b, color.a, flattenFactor);
 	}
 	color::RGBA color(0, 0, 0, AlphaThreshold);

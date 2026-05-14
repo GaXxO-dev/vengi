@@ -391,4 +391,57 @@ TEST_F(ColorUtilTest, testParseColorInvalid) {
 	EXPECT_FALSE(color::parseColor("12", c));
 }
 
+TEST_F(ColorUtilTest, testAdjustSaturation) {
+	color::RGBA red(255, 0, 0, 255);
+	color::RGBA result = color::adjustSaturation(red, 1.0f);
+	EXPECT_EQ(255, result.r);
+	EXPECT_EQ(0, result.g);
+	EXPECT_EQ(0, result.b);
+	EXPECT_EQ(255, result.a);
+
+	color::RGBA gray = color::adjustSaturation(red, 0.0f);
+	EXPECT_EQ(gray.r, gray.g);
+	EXPECT_EQ(gray.g, gray.b);
+	EXPECT_EQ(255, gray.a);
+
+	color::RGBA color(100, 150, 200, 255);
+	color::RGBA saturated = color::adjustSaturation(color, 2.0f);
+	float h, s, b;
+	color::getHSB(color, h, s, b);
+	float hs, ss, bs;
+	color::getHSB(saturated, hs, ss, bs);
+	EXPECT_GT(ss, s);
+}
+
+TEST_F(ColorUtilTest, testPosterizeHSBDisabled) {
+	color::RGBA red(255, 0, 0, 255);
+	color::RGBA result = color::posterizeHSB(red, 0, 0, 0);
+	EXPECT_EQ(red.r, result.r);
+	EXPECT_EQ(red.g, result.g);
+	EXPECT_EQ(red.b, result.b);
+	EXPECT_EQ(red.a, result.a);
+}
+
+TEST_F(ColorUtilTest, testPosterizeHSBBrightness) {
+	color::RGBA white(255, 255, 255, 255);
+	color::RGBA result = color::posterizeHSB(white, 0, 0, 2);
+	float h, s, b;
+	color::getHSB(result, h, s, b);
+	EXPECT_FLOAT_EQ(1.0f, b);
+
+	color::RGBA black(0, 0, 0, 255);
+	result = color::posterizeHSB(black, 0, 0, 2);
+	color::getHSB(result, h, s, b);
+	EXPECT_FLOAT_EQ(0.0f, b);
+}
+
+TEST_F(ColorUtilTest, testPosterizeHSBHue) {
+	color::RGBA orange(255, 165, 0, 255);
+	color::RGBA result = color::posterizeHSB(orange, 6, 0, 0);
+	float h, s, b;
+	color::getHSB(result, h, s, b);
+	EXPECT_LT(h, 1.0f);
+	EXPECT_GT(h, 0.0f);
+}
+
 } // namespace color

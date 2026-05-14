@@ -379,14 +379,25 @@ bool PaletteFormat::save(const scenegraph::SceneGraph &sceneGraph, const core::S
 
 Format::Format() {
 	_flattenFactor = core::getVar(cfg::VoxformatRGBFlattenFactor)->intVal();
+	_saturation = core::getVar(cfg::VoxformatSaturation)->floatVal();
+	_hueSteps = core::getVar(cfg::VoxformatHueSteps)->intVal();
+	_saturationSteps = core::getVar(cfg::VoxformatSaturationSteps)->intVal();
+	_brightnessSteps = core::getVar(cfg::VoxformatBrightnessSteps)->intVal();
 }
 
 color::RGBA Format::flattenRGB(color::RGBA rgba) const {
-	return color::flattenRGB(rgba.r, rgba.g, rgba.b, rgba.a, _flattenFactor);
+	rgba = color::flattenRGB(rgba.r, rgba.g, rgba.b, rgba.a, _flattenFactor);
+	if (_saturation != 1.0f) {
+		rgba = color::adjustSaturation(rgba, _saturation);
+	}
+	if (_hueSteps > 1 || _saturationSteps > 1 || _brightnessSteps > 1) {
+		rgba = color::posterizeHSB(rgba, _hueSteps, _saturationSteps, _brightnessSteps);
+	}
+	return rgba;
 }
 
 color::RGBA Format::flattenRGB(uint8_t r, uint8_t g, uint8_t b, uint8_t a) const {
-	return color::flattenRGB(r, g, b, a, _flattenFactor);
+	return flattenRGB(color::RGBA(r, g, b, a));
 }
 
 int Format::createPalette(const palette::RGBABuffer &colors, palette::Palette &palette) const {

@@ -74,6 +74,10 @@ static constexpr int MaxRegionSize = 256;
 class Format {
 protected:
 	uint8_t _flattenFactor;
+	float _saturation = 1.0f;
+	int _hueSteps = 0;
+	int _saturationSteps = 0;
+	int _brightnessSteps = 0;
 	/**
 	 * @brief If you have to split the volumes in the scene graph because the format only supports a certain size, you
 	 * can return the max size here. If the returned value is not a valid volume size (<= 0) the value is ignored.

@@ -62,6 +62,19 @@ core::String print(RGBA rgba, bool colorAsHex = true);
 color::RGBA flattenRGB(uint8_t r, uint8_t g, uint8_t b, uint8_t a, uint8_t f);
 
 /**
+ * @brief Adjusts the saturation of a color. Saturation 1.0 = no change, 0.0 = grayscale, >1.0 = more saturated.
+ */
+color::RGBA adjustSaturation(color::RGBA rgba, float saturation);
+
+/**
+ * @brief Posterizes color in HSB space by quantizing hue, saturation, and brightness to discrete steps.
+ * @param stepsH Number of hue steps (0 = disabled, typical: 8-24)
+ * @param stepsS Number of saturation steps (0 = disabled, typical: 4-8)
+ * @param stepsB Number of brightness steps (0 = disabled, typical: 3-6 for cel shading)
+ */
+color::RGBA posterizeHSB(color::RGBA rgba, int stepsH, int stepsS, int stepsB);
+
+/**
  * @brief Converts RGBA components to a vec4.
  */
 glm::vec4 fromRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255);

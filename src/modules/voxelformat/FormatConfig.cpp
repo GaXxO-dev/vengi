@@ -35,6 +35,34 @@ bool FormatConfig::init() {
 		   "area contribution - otherwise only the biggest triangle counts"),
 		core::CV_NOPERSIST);
 	core::registerVar(voxformatRGBWeightedAverage);
+	const core::VarDef voxformatSaturation(cfg::VoxformatSaturation, 1.0f, 0.0f, 4.0f, N_("Saturation"),
+											N_("Saturation multiplier applied during voxelization. 1.0 = no change, "
+											   "0.0 = grayscale, >1.0 = more saturated colors"),
+											core::CV_NOPERSIST);
+	core::registerVar(voxformatSaturation);
+	const core::VarDef voxformatHueSteps(cfg::VoxformatHueSteps, 0, 0, 360, N_("Hue steps"),
+										 N_("Number of discrete hue steps for HSB posterization. 0 = disabled. "
+											"Reduces the number of distinct hues in the output."),
+										 core::CV_NOPERSIST);
+	core::registerVar(voxformatHueSteps);
+	const core::VarDef voxformatSaturationSteps(cfg::VoxformatSaturationSteps, 0, 0, 256, N_("Saturation steps"),
+												 N_("Number of discrete saturation steps for HSB posterization. "
+													"0 = disabled. Reduces color saturation variety."),
+												 core::CV_NOPERSIST);
+	core::registerVar(voxformatSaturationSteps);
+	const core::VarDef voxformatBrightnessSteps(cfg::VoxformatBrightnessSteps, 0, 0, 256,
+												 N_("Brightness steps"),
+												 N_("Number of discrete brightness levels for HSB posterization. "
+													"0 = disabled. Creates cel-shading-like flat lighting bands. "
+													"Typical values: 3-6 for cartoon style."),
+												 core::CV_NOPERSIST);
+	core::registerVar(voxformatBrightnessSteps);
+	const core::VarDef voxformatPaletteMatchDistance(
+		cfg::VoxformatPaletteMatchDistance, 0, 0, 1, N_("Palette match distance"),
+		N_("Distance function for matching colors to palette entries. "
+		   "0 = RGB approximation (default, fast), 1 = HSB (hue-dominant, better for preserving perceived color)"),
+		core::CV_NOPERSIST);
+	core::registerVar(voxformatPaletteMatchDistance);
 	const core::VarDef voxformatAmbientocclusion(cfg::VoxformatAmbientocclusion, false, N_("Ambient occlusion"),
 												 N_("Extra vertices for ambient occlusion"), core::CV_NOPERSIST);
 	core::registerVar(voxformatAmbientocclusion);

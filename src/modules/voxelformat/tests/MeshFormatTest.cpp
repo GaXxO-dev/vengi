@@ -4,6 +4,7 @@
 
 #include "color/ColorUtil.h"
 #include "voxelformat/private/mesh/MeshFormat.h"
+#include "voxelformat/private/mesh/PosSampling.h"
 #include "color/Color.h"
 #include "core/ConfigVar.h"
 #include "core/tests/TestColorHelper.h"
@@ -272,6 +273,35 @@ TEST_F(MeshFormatTest, testSaveAsPointCloudUsesVoxelCenters) {
 	EXPECT_EQ(glm::vec3(1.5f, 0.5f, 0.5f), testMesh.savedPointCloud[1].position);
 	EXPECT_EQ(nipponRed, testMesh.savedPointCloud[0].color);
 	EXPECT_EQ(nipponRed, testMesh.savedPointCloud[1].color);
+}
+
+TEST_F(MeshFormatTest, testPosSamplingWeightedAverage) {
+	const color::RGBA red(255, 0, 0, 255);
+	const color::RGBA green(0, 255, 0, 255);
+	const color::RGBA blue(0, 0, 255, 255);
+
+	PosSampling sampling(100, red, 0, 0);
+	ASSERT_TRUE(sampling.add(200, green, 0, 0));
+	ASSERT_TRUE(sampling.add(300, blue, 0, 0));
+
+	const color::RGBA result = sampling.getColor(0, true);
+	const uint32_t totalArea = 100u + 200u + 300u;
+	const uint8_t expectedR = (uint8_t)((255 * 100 + totalArea / 2) / totalArea);
+	const uint8_t expectedG = (uint8_t)((255 * 200 + totalArea / 2) / totalArea);
+	const uint8_t expectedB = (uint8_t)((255 * 300 + totalArea / 2) / totalArea);
+	EXPECT_EQ(expectedR, result.r);
+	EXPECT_EQ(expectedG, result.g);
+	EXPECT_EQ(expectedB, result.b);
+	EXPECT_EQ(255, result.a);
+}
+
+TEST_F(MeshFormatTest, testPosSamplingDuplicateColorAccumulates) {
+	const color::RGBA red(255, 0, 0, 255);
+
+	PosSampling sampling(100, red, 0, 0);
+	ASSERT_TRUE(sampling.add(200, red, 0, 0));
+	EXPECT_EQ(300u, sampling.entry(0).area);
+	EXPECT_EQ(0u, sampling.entry(1).area);
 }
 
 } // namespace voxelformat

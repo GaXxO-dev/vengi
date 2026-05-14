@@ -33,8 +33,8 @@ static inline size_t computeIndex(color::RGBA rgba) {
 
 } // namespace priv
 
-PaletteLookup::PaletteLookup(const palette::Palette &palette)
-	: _palette(palette), _cache(priv::CACHE_SIZE, PaletteColorNotFound) {
+PaletteLookup::PaletteLookup(const palette::Palette &palette, color::Distance distance)
+	: _palette(palette), _cache(priv::CACHE_SIZE, PaletteColorNotFound), _distance(distance) {
 }
 
 uint8_t PaletteLookup::findClosestIndex(const glm::vec4 &color) {
@@ -48,14 +48,14 @@ uint8_t PaletteLookup::findClosestIndex(color::RGBA rgba) {
 	uint16_t oldValue = _cache[idx];
 	if (oldValue == (uint16_t)PaletteColorNotFound) {
 		core_assert_always(_palette.colorCount() > 0);
-		uint16_t newValue = _palette.getClosestMatch(rgba);
+		uint16_t newValue = _palette.getClosestMatch(rgba, -1, _distance);
 		InterlockedExchange16(reinterpret_cast<volatile int16_t *>(&_cache[idx]), newValue);
 	}
 #elif defined(__GNUC__) || defined(__clang__)
 	uint16_t oldValue = __atomic_load_n(&_cache[idx], __ATOMIC_RELAXED);
 	if (oldValue == (uint16_t)PaletteColorNotFound) {
 		core_assert_always(_palette.colorCount() > 0);
-		uint16_t newValue = _palette.getClosestMatch(rgba);
+		uint16_t newValue = _palette.getClosestMatch(rgba, -1, _distance);
 		__atomic_exchange_n(&_cache[idx], newValue, __ATOMIC_SEQ_CST);
 	}
 #else

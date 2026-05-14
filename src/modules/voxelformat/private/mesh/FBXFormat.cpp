@@ -476,6 +476,7 @@ int FBXFormat::addMeshNode(const ufbx_scene *ufbxScene, const ufbx_node *ufbxNod
 					if (tex->isLoaded()) {
 						Log::debug("Use image %s", textureName.c_str());
 						mat->texture = tex;
+						mat->originUpperLeft = true;
 					} else {
 						useUVs = false;
 					}

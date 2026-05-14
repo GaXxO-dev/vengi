@@ -25,7 +25,8 @@ public:
 	color::RGBA emitColor{0, 0, 0, 0};
 	float baseColorFactor = 0.0f;
 	float transparency = 0.0f;
-	int16_t uvIndex = 0; // the index of the texture coordinate set used by this material
+	int16_t uvIndex = 0;
+	bool originUpperLeft = false;
 
 	int width() const;
 	int height() const;

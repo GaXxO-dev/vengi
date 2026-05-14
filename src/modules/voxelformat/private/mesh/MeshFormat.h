@@ -6,6 +6,7 @@
 
 #include "MeshTri.h"
 #include "PosSampling.h"
+#include "color/Distance.h"
 #include "core/Common.h"
 #include "core/UUID.h"
 #include "core/collection/DynamicArray.h"
@@ -80,6 +81,7 @@ protected:
 	 * @brief Color flatten factor - see @c PosSampling::getColor()
 	 */
 	bool _weightedAverage = true;
+	color::Distance _paletteDistance = color::Distance::Approximation;
 
 
 	struct ChunkMeshExt {
