@@ -106,4 +106,10 @@ inline color::RGBA colorAt(const MeshTri &tri, const MeshMaterialArray &meshMate
 	return mixColors(tri.color0(), tri.color1(), tri.color2());
 }
 
+inline color::RGBA colorAtOpaque(const MeshTri &tri, const MeshMaterialArray &meshMaterialArray, const glm::vec2 &uv) {
+	color::RGBA rgba = colorAt(tri, meshMaterialArray, uv);
+	rgba.a = 255;
+	return rgba;
+}
+
 } // namespace voxelformat

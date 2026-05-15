@@ -45,4 +45,6 @@ using MeshMaterialIndex = int16_t;
 using MeshMaterialMap = core::StringMap<MeshMaterialIndex>;
 using MeshMaterialArray = core::DynamicArray<MeshMaterialPtr>;
 
+color::RGBA forceOpaque(color::RGBA color);
+
 } // namespace voxelformat

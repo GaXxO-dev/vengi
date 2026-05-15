@@ -801,13 +801,16 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 	}
 
 	// Count unique palettes for per-color material allocation
-	// Each unique palette gets up to 256 materials
+	// Each unique palette gets up to 256 materials for transparent submesh
+	// and up to 256 materials for opaque submesh (all forced opaque)
 	struct PaletteMaterialInfo {
-		int baseMaterialIdx; // index into gltfMaterials array
+		int baseMaterialIdx; // index into gltfMaterials array for transparent materials
+		int opaqueBaseMaterialIdx; // index into gltfMaterials array for opaque (alpha-forced) materials
 		int colorCount;
 	};
 	core::DynamicMap<uint64_t, PaletteMaterialInfo> paletteMaterialMap;
 	int totalPerColorMaterials = 0;
+	bool anyPaletteHasAlpha = false;
 	for (int mi = 0; mi < (int)meshInfos.size(); ++mi) {
 		if (!meshInfos[mi].perColorMaterials) {
 			continue;
@@ -821,7 +824,29 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 			pmi.baseMaterialIdx = totalPerColorMaterials;
 			pmi.colorCount = pal.colorCount();
 			paletteMaterialMap.put(palHash, pmi);
-			totalPerColorMaterials += palette::PaletteMaxColors; // reserve slots for all 256 colors
+			totalPerColorMaterials += palette::PaletteMaxColors;
+		}
+		for (int c = 0; c < pal.colorCount(); ++c) {
+			if (pal.hasAlpha(c)) {
+				anyPaletteHasAlpha = true;
+				break;
+			}
+		}
+		if (anyPaletteHasAlpha) {
+			break;
+		}
+	}
+	// Allocate opaque material variants if needed (for mesh[0] / VoxelType::Generic voxels)
+	if (anyPaletteHasAlpha) {
+		for (auto iter = paletteMaterialMap.begin(); iter != paletteMaterialMap.end(); ++iter) {
+			PaletteMaterialInfo &pmi = iter->value;
+			pmi.opaqueBaseMaterialIdx = totalPerColorMaterials;
+			totalPerColorMaterials += palette::PaletteMaxColors;
+		}
+	} else {
+		for (auto iter = paletteMaterialMap.begin(); iter != paletteMaterialMap.end(); ++iter) {
+			PaletteMaterialInfo &pmi = iter->value;
+			pmi.opaqueBaseMaterialIdx = pmi.baseMaterialIdx;
 		}
 	}
 
@@ -1070,6 +1095,43 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 				mat.emissive_strength.emissive_strength = palMat.value(palette::MaterialProperty::MaterialEmit);
 			}
 		}
+
+		// Create opaque material variants (for VoxelType::Generic / mesh[0])
+		// These are identical to the transparent materials except alpha_mode is always opaque
+		if (anyPaletteHasAlpha) {
+			for (int c = 0; c < palette::PaletteMaxColors; ++c) {
+				int opaqueMatIdx = pmi.opaqueBaseMaterialIdx + c;
+				cgltf_material &opaqueMat = gltfMaterials[opaqueMatIdx];
+				const palette::Material &palMat = pal->material(c);
+
+				opaqueMat.has_pbr_metallic_roughness = true;
+				opaqueMat.pbr_metallic_roughness.base_color_texture.texture = &gltfTextures[palTexIdx];
+				opaqueMat.pbr_metallic_roughness.base_color_factor[0] = 1.0f;
+				opaqueMat.pbr_metallic_roughness.base_color_factor[1] = 1.0f;
+				opaqueMat.pbr_metallic_roughness.base_color_factor[2] = 1.0f;
+				opaqueMat.pbr_metallic_roughness.base_color_factor[3] = 1.0f;
+				opaqueMat.pbr_metallic_roughness.metallic_factor = palMat.has(palette::MaterialProperty::MaterialMetal)
+																	  ? palMat.value(palette::MaterialProperty::MaterialMetal)
+																	  : 0.0f;
+				opaqueMat.pbr_metallic_roughness.roughness_factor =
+					palMat.has(palette::MaterialProperty::MaterialRoughness)
+						? palMat.value(palette::MaterialProperty::MaterialRoughness)
+						: 1.0f;
+
+				opaqueMat.alpha_mode = cgltf_alpha_mode_opaque;
+
+				if (palMat.has(palette::MaterialProperty::MaterialEmit)) {
+					float emit = palMat.value(palette::MaterialProperty::MaterialEmit);
+					opaqueMat.emissive_factor[0] = emit;
+					opaqueMat.emissive_factor[1] = emit;
+					opaqueMat.emissive_factor[2] = emit;
+				}
+				if (palMat.has(palette::MaterialProperty::MaterialEmit)) {
+					opaqueMat.has_emissive_strength = true;
+					opaqueMat.emissive_strength.emissive_strength = palMat.value(palette::MaterialProperty::MaterialEmit);
+				}
+			}
+		}
 	}
 
 	int bvIdx = 0, accIdx = 0, primIdx = 0;
@@ -1195,7 +1257,7 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 				primitives[primIdx].indices = &accessors[accIdx];
 				primitives[primIdx].attributes = &attributes[attrBase];
 				primitives[primIdx].attributes_count = attrCount;
-				primitives[primIdx].material = &gltfMaterials[pmi.baseMaterialIdx + pci.colorIdx];
+				primitives[primIdx].material = &gltfMaterials[(anyPaletteHasAlpha && info.subMeshIdx == 0) ? pmi.opaqueBaseMaterialIdx : pmi.baseMaterialIdx + pci.colorIdx];
 				++primIdx;
 				++bvIdx;
 				++accIdx;
@@ -1276,6 +1338,12 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 				gltfMaterials[texIdx].pbr_metallic_roughness.base_color_factor[3] = 1.0f;
 				gltfMaterials[texIdx].pbr_metallic_roughness.roughness_factor = 1.0f;
 				gltfMaterials[texIdx].pbr_metallic_roughness.metallic_factor = 1.0f;
+				// mesh[0] = opaque (VoxelType::Generic), mesh[1] = transparent (VoxelType::Transparent)
+				if (info.subMeshIdx == 0) {
+					gltfMaterials[texIdx].alpha_mode = cgltf_alpha_mode_opaque;
+				} else {
+					gltfMaterials[texIdx].alpha_mode = cgltf_alpha_mode_blend;
+				}
 
 				if (withMaterials && !info.useGreedyTexture) {
 					const scenegraph::SceneGraphNode &gn = sceneGraph.node(meshExt.nodeId);

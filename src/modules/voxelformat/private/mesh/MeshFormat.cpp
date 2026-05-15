@@ -178,13 +178,14 @@ void MeshFormat::transformTris(const voxel::Region &region, const MeshTriCollect
 	Log::debug("subdivided into %i triangles", (int)tris.size());
 	palette::NormalPaletteLookup normalLookup(normalPalette);
 	const int parallel = app::for_parallel_size(0, tris.size());
+	const bool ignoreTransparency = core::getVar(cfg::VoxformatIgnoreTransparency)->boolVal();
 	core::DynamicArray<PosMap> localMaps;
 	localMaps.resize(parallel);
 	for (int i = 0; i < parallel; ++i) {
 		localMaps[i].reserve(((int)tris.size() / parallel) + 1);
 	}
 	core::AtomicInt mapIdx(0);
-	auto fn = [&tris, &region, &normalLookup, &localMaps, &mapIdx, &meshMaterialArray, this](int start, int end) {
+	auto fn = [&tris, &region, &normalLookup, &localMaps, &mapIdx, &meshMaterialArray, ignoreTransparency, this](int start, int end) {
 		const int idx = mapIdx.increment();
 		PosMap &localMap = localMaps[idx];
 		for (int i = start; i < end; ++i) {
@@ -193,7 +194,7 @@ void MeshFormat::transformTris(const voxel::Region &region, const MeshTriCollect
 			}
 			const voxelformat::MeshTri &meshTri = tris[i];
 			const glm::vec2 &uv = meshTri.centerUV();
-			const color::RGBA rgba = colorAt(meshTri, meshMaterialArray, uv);
+			color::RGBA rgba = ignoreTransparency ? colorAtOpaque(meshTri, meshMaterialArray, uv) : colorAt(meshTri, meshMaterialArray, uv);
 			if (rgba.a <= AlphaThreshold) {
 				continue;
 			}
@@ -222,13 +223,14 @@ void MeshFormat::transformTrisAxisAligned(const voxel::Region &region, const Mes
 	Log::debug("axis aligned %i triangles", (int)tris.size());
 	palette::NormalPaletteLookup normalLookup(normalPalette);
 	const int parallel = app::for_parallel_size(0, tris.size());
+	const bool ignoreTransparency = core::getVar(cfg::VoxformatIgnoreTransparency)->boolVal();
 	core::DynamicArray<PosMap> localMaps;
 	localMaps.resize(parallel);
 	for (int i = 0; i < parallel; ++i) {
 		localMaps[i].reserve(((int)tris.size() / parallel) + 1);
 	}
 	core::AtomicInt mapIdx(0);
-	auto fn = [&tris, &normalLookup, region, &localMaps, &mapIdx, &meshMaterialArray, this](int start, int end) {
+	auto fn = [&tris, &normalLookup, region, &localMaps, &mapIdx, &meshMaterialArray, ignoreTransparency, this](int start, int end) {
 		const int idx = mapIdx.increment();
 		PosMap &localMap = localMaps[idx];
 		for (int i = start; i < end; ++i) {
@@ -266,7 +268,7 @@ void MeshFormat::transformTrisAxisAligned(const voxel::Region &region, const Mes
 						if (!meshTri.calcUVs(surfacePoint, uv)) {
 							continue;
 						}
-						const color::RGBA rgba = colorAt(meshTri, meshMaterialArray, uv);
+						const color::RGBA rgba = ignoreTransparency ? colorAtOpaque(meshTri, meshMaterialArray, uv) : colorAt(meshTri, meshMaterialArray, uv);
 						if (rgba.a <= AlphaThreshold) {
 							continue;
 						}
@@ -386,13 +388,14 @@ int MeshFormat::voxelizeNodeChunked(const core::String &name, scenegraph::SceneG
 
 	palette::Palette palette;
 	const bool shouldCreatePalette = core::getVar(cfg::VoxelCreatePalette)->boolVal();
+	const bool ignoreTransparency = core::getVar(cfg::VoxformatIgnoreTransparency)->boolVal();
 	if (shouldCreatePalette) {
 		palette::RGBAMaterialMap colorMaterials;
 		for (const voxelformat::MeshTri &meshTri : tris) {
 			voxelizeTriangle(
 				trisMins, meshTri,
-				[this, &colorMaterials, &meshMaterialArray](const voxelformat::MeshTri &tri, const glm::vec2 &uv, int x, int y, int z) {
-					const color::RGBA rgba = flattenRGB(colorAt(tri, meshMaterialArray, uv));
+				[this, &colorMaterials, &meshMaterialArray, ignoreTransparency](const voxelformat::MeshTri &tri, const glm::vec2 &uv, int x, int y, int z) {
+					const color::RGBA rgba = ignoreTransparency ? forceOpaque(flattenRGB(colorAt(tri, meshMaterialArray, uv))) : flattenRGB(colorAt(tri, meshMaterialArray, uv));
 					const palette::Material *newMat = tri.materialIdx >= 0 && tri.materialIdx < (int)meshMaterialArray.size() ? &meshMaterialArray[tri.materialIdx]->material : nullptr;
 					auto iter = colorMaterials.find(rgba);
 					if (iter == colorMaterials.end() || (newMat && (!iter->value || newMat->mask > iter->value->mask))) {
@@ -410,6 +413,15 @@ int MeshFormat::voxelizeNodeChunked(const core::String &name, scenegraph::SceneG
 		if (singleColor.a == 0) {
 			singleColor.a = 255;
 			palette.setColor(0, singleColor);
+		}
+	}
+	if (ignoreTransparency) {
+		for (int i = 0; i < palette.colorCount(); ++i) {
+			color::RGBA c = palette.color(i);
+			if (c.a != 255) {
+				c.a = 255;
+				palette.setColor(i, c);
+			}
 		}
 	}
 
@@ -475,7 +487,7 @@ int MeshFormat::voxelizeNodeChunked(const core::String &name, scenegraph::SceneG
 						if (!chunkRegion.containsPoint(x, y, z)) {
 							return;
 						}
-						const color::RGBA color = flattenRGB(colorAt(tri, meshMaterialArray, uv));
+						const color::RGBA color = ignoreTransparency ? forceOpaque(flattenRGB(colorAt(tri, meshMaterialArray, uv))) : flattenRGB(colorAt(tri, meshMaterialArray, uv));
 						if (color.a <= AlphaThreshold) {
 							return;
 						}
@@ -626,6 +638,7 @@ int MeshFormat::voxelizeNode(const core::UUID &uuid, const core::String &name, s
 		palette::Palette palette;
 
 		const bool shouldCreatePalette = core::getVar(cfg::VoxelCreatePalette)->boolVal();
+		const bool ignoreTransparency = core::getVar(cfg::VoxformatIgnoreTransparency)->boolVal();
 		if (shouldCreatePalette) {
 			palette::RGBAMaterialMap colorMaterials;
 			Log::debug("create palette");
@@ -633,8 +646,8 @@ int MeshFormat::voxelizeNode(const core::UUID &uuid, const core::String &name, s
 #if 1
 				voxelizeTriangle(
 					trisMins, meshTri,
-					[this, &colorMaterials, &meshMaterialArray](const voxelformat::MeshTri &tri, const glm::vec2 &uv, int x, int y, int z) {
-						const color::RGBA rgba = flattenRGB(colorAt(tri, meshMaterialArray, uv));
+					[this, &colorMaterials, &meshMaterialArray, ignoreTransparency](const voxelformat::MeshTri &tri, const glm::vec2 &uv, int x, int y, int z) {
+						const color::RGBA rgba = ignoreTransparency ? forceOpaque(flattenRGB(colorAt(tri, meshMaterialArray, uv))) : flattenRGB(colorAt(tri, meshMaterialArray, uv));
 						const palette::Material *newMat = tri.materialIdx >= 0 && tri.materialIdx < (int)meshMaterialArray.size() ? &meshMaterialArray[tri.materialIdx]->material : nullptr;
 						auto iter = colorMaterials.find(rgba);
 						if (iter == colorMaterials.end()) {
@@ -661,7 +674,7 @@ int MeshFormat::voxelizeNode(const core::UUID &uuid, const core::String &name, s
 		palette::NormalPaletteLookup normalLookup(normalPalette);
 		for (const voxelformat::MeshTri &meshTri : tris) {
 			auto fn = [&](const voxelformat::MeshTri &tri, const glm::vec2 &uv, int x, int y, int z) {
-				const color::RGBA color = flattenRGB(colorAt(tri, meshMaterialArray, uv));
+				const color::RGBA color = ignoreTransparency ? forceOpaque(flattenRGB(colorAt(tri, meshMaterialArray, uv))) : flattenRGB(colorAt(tri, meshMaterialArray, uv));
 				const glm::vec3 &normal = tri.normal();
 				int normalIdx = normalLookup.getClosestMatch(normal);
 				if (normalIdx == palette::PaletteNormalNotFound) {
@@ -679,6 +692,15 @@ int MeshFormat::voxelizeNode(const core::UUID &uuid, const core::String &name, s
 			if (c.a == 0) {
 				c.a = 255;
 				palette.setColor(0, c);
+			}
+		}
+		if (ignoreTransparency) {
+			for (int i = 0; i < palette.colorCount(); ++i) {
+				color::RGBA c = palette.color(i);
+				if (c.a != 255) {
+					c.a = 255;
+					palette.setColor(i, c);
+				}
 			}
 		}
 		node.setPalette(palette);
@@ -781,6 +803,7 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 	}
 	palette::Palette palette;
 	const bool shouldCreatePalette = core::getVar(cfg::VoxelCreatePalette)->boolVal();
+	const bool ignoreTransparency = core::getVar(cfg::VoxformatIgnoreTransparency)->boolVal();
 	if (shouldCreatePalette) {
 		palette::RGBAMaterialMap colorMaterials;
 		Log::debug("create palette");
@@ -790,7 +813,10 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 			}
 			const PosSampling &pos = entry->second;
 			// TODO: PERF: don't do pos.getColor call twice
-			const color::RGBA rgba = pos.getColor(_flattenFactor, _weightedAverage);
+			color::RGBA rgba = pos.getColor(_flattenFactor, _weightedAverage);
+			if (ignoreTransparency) {
+				rgba.a = 255;
+			}
 			if (rgba.a <= AlphaThreshold) {
 				continue;
 			}
@@ -811,11 +837,14 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 	Log::debug("create voxels for %i positions", (int)posMap.size());
 	voxel::RawVolume *volume = node.volume();
 	palette::PaletteLookup palLookup(palette, _paletteDistance);
-	auto fn = [&palette, volume, &palLookup, this](int idx, const PosSampling &posSampling) {
+	auto fn = [&palette, volume, &palLookup, this, ignoreTransparency](int idx, const PosSampling &posSampling) {
 		if (stopExecution()) {
 			return;
 		}
-		const color::RGBA rgba = posSampling.getColor(_flattenFactor, _weightedAverage);
+		color::RGBA rgba = posSampling.getColor(_flattenFactor, _weightedAverage);
+		if (ignoreTransparency) {
+			rgba.a = 255;
+		}
 		if (rgba.a <= AlphaThreshold) {
 			return;
 		}
@@ -829,6 +858,15 @@ void MeshFormat::voxelizeTris(scenegraph::SceneGraphNode &node, const PosMap &po
 		if (c.a == 0) {
 			c.a = 255;
 			palette.setColor(0, c);
+		}
+	}
+	if (ignoreTransparency) {
+		for (int i = 0; i < palette.colorCount(); ++i) {
+			color::RGBA c = palette.color(i);
+			if (c.a != 255) {
+				c.a = 255;
+				palette.setColor(i, c);
+			}
 		}
 	}
 	node.setPalette(palette);

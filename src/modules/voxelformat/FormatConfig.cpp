@@ -204,6 +204,11 @@ bool FormatConfig::init() {
 	const core::VarDef voxformatWithMaterials(cfg::VoxformatWithMaterials, true, N_("Export materials"),
 											  N_("Try to export material properties if the formats support it"),
 											  core::CV_NOPERSIST);
+	const core::VarDef voxformatIgnoreTransparency(
+		cfg::VoxformatIgnoreTransparency, false, N_("Ignore transparency"),
+		N_("Ignore transparency when voxelizing mesh formats. All voxels will be opaque regardless of source material alpha."),
+		core::CV_NOPERSIST);
+	core::registerVar(voxformatIgnoreTransparency);
 	core::registerVar(voxformatWithMaterials);
 	const core::VarDef voxformatImageVolumeMaxDepth(
 		cfg::VoxformatImageVolumeMaxDepth, 1, 1, 255, N_("Max depth"),

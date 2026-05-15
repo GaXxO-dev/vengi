@@ -304,4 +304,21 @@ TEST_F(MeshFormatTest, testPosSamplingDuplicateColorAccumulates) {
 	EXPECT_EQ(0u, sampling.entry(1).area);
 }
 
+TEST_F(MeshFormatTest, testForceOpaque) {
+	color::RGBA semiTransparent(200, 100, 50, 128);
+	color::RGBA opaque = forceOpaque(semiTransparent);
+	EXPECT_EQ(255, opaque.a) << "forceOpaque should set alpha to 255";
+	EXPECT_EQ(200, opaque.r) << "forceOpaque should preserve RGB";
+	EXPECT_EQ(100, opaque.g) << "forceOpaque should preserve RGB";
+	EXPECT_EQ(50, opaque.b) << "forceOpaque should preserve RGB";
+
+	color::RGBA alreadyOpaque(200, 100, 50, 255);
+	opaque = forceOpaque(alreadyOpaque);
+	EXPECT_EQ(255, opaque.a) << "forceOpaque should keep 255 alpha";
+
+	color::RGBA nearZero(10, 20, 30, 1);
+	opaque = forceOpaque(nearZero);
+	EXPECT_EQ(255, opaque.a) << "forceOpaque should set even very low alpha to 255";
+}
+
 } // namespace voxelformat

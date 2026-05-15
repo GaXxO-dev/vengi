@@ -296,6 +296,7 @@ static void loadOptionsMesh(const io::FormatDescription *desc) {
 
 	ImGui::InputVarString(cfg::VoxformatTexturePath);
 	ImGui::CheckboxVar(cfg::VoxformatFillHollow);
+	ImGui::CheckboxVar(cfg::VoxformatIgnoreTransparency);
 	ImGui::InputVarInt(cfg::VoxformatPointCloudSize);
 	ImGui::CheckboxVar(cfg::VoxformatMeshSimplify);
 

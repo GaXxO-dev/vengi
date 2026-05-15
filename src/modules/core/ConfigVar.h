@@ -130,6 +130,7 @@ constexpr const char *VoxformatVoxelizeChunkSize = "voxformat_voxelize_chunksize
 constexpr const char *VoxformatVoxelSize = "voxformat_voxelsize";
 constexpr const char *VoxformatQBTPaletteMode = "voxformat_qbtpalettemode";
 constexpr const char *VoxformatQBTMergeCompounds = "voxformat_qbtmergecompounds";
+constexpr const char *VoxformatIgnoreTransparency = "voxformat_ignoretransparency";
 constexpr const char *VoxformatVOXCreateLayers = "voxformat_voxcreatelayers";
 constexpr const char *VoxformatVOXCreateGroups = "voxformat_voxcreategroups";
 constexpr const char *VoxformatVOXAnimAsNodes = "voxformat_voxanimasnodes";

@@ -61,4 +61,9 @@ bool MeshMaterial::colorAt(color::RGBA &color, const glm::vec2 &uv, bool originU
 	return true;
 }
 
+color::RGBA forceOpaque(color::RGBA color) {
+	color.a = 255;
+	return color;
+}
+
 } // namespace voxelformat
