@@ -72,6 +72,7 @@ void extractSurface(voxel::SurfaceExtractionContext &ctx) {
 	if (ctx.optimize) {
 		ctx.mesh.optimize();
 	}
+	ctx.mesh.deduplicateVertices();
 	ctx.mesh.removeUnusedVertices();
 	ctx.mesh.compressIndices();
 }

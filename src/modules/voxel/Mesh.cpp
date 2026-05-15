@@ -568,22 +568,81 @@ void Mesh::optimize() {
 	if (isEmpty()) {
 		return;
 	}
-#if 0
-	// TODO: https://github.com/vengi-voxel/vengi/issues/707
 	core_trace_scoped(MeshOptimize);
 	meshopt_optimizeVertexCache(_vecIndices.data(), _vecIndices.data(), _vecIndices.size(), _vecVertices.size());
-	meshopt_optimizeOverdraw(_vecIndices.data(), _vecIndices.data(), _vecIndices.size(), &_vecVertices.data()->position.x, _vecVertices.size(), sizeof(VoxelVertex), 1.05f);
-	meshopt_optimizeVertexFetch(_vecVertices.data(), _vecIndices.data(), _vecIndices.size(), _vecVertices.data(), _vecVertices.size(), sizeof(VoxelVertex));
-	const IndexArray oldIndices(_vecIndices);
-	const unsigned int options = meshopt_SimplifyPermissive;
-	const size_t newSize =
-		meshopt_simplify(_vecIndices.data(), oldIndices.data(), oldIndices.size(), &_vecVertices.data()->position.x,
-						 _vecVertices.size(), sizeof(VoxelVertex), oldIndices.size() / 2, 0.1f, options, nullptr);
-	Log::debug("newSize: %i, oldsize: %i", (int)newSize, (int)oldIndices.size());
-	_vecIndices.shrink(newSize);
-#else
-	Log::warn("Mesh optimization is currently disabled");
-#endif
+	meshopt_optimizeOverdraw(_vecIndices.data(), _vecIndices.data(), _vecIndices.size(),
+							 &_vecVertices.data()->position.x, _vecVertices.size(), sizeof(VoxelVertex), 1.05f);
+	meshopt_optimizeVertexFetch(_vecVertices.data(), _vecIndices.data(), _vecIndices.size(), _vecVertices.data(),
+								_vecVertices.size(), sizeof(VoxelVertex));
+}
+
+void Mesh::deduplicateVertices() {
+	if (_vecVertices.empty() || _vecIndices.empty()) {
+		return;
+	}
+	const size_t originalCount = _vecVertices.size();
+
+	// Open-addressing hash table: next power of two >= 2*vertex count
+	size_t tableSize = 1;
+	while (tableSize < originalCount * 2) {
+		tableSize <<= 1;
+	}
+	const size_t tableMask = tableSize - 1;
+	core::Buffer<uint32_t> entries(tableSize);
+	entries.fill(~0u);
+
+	IndexArray newPos(originalCount);
+	VertexArray newVertices;
+	newVertices.reserve(originalCount);
+	NormalArray newNormals;
+	if (!_normals.empty()) {
+		newNormals.reserve(originalCount);
+	}
+
+	for (size_t i = 0; i < originalCount; ++i) {
+		const VoxelVertex &v = _vecVertices[i];
+		const uint32_t *data = (const uint32_t *)&v;
+		uint32_t hash = data[0] ^ (data[1] * 0x9e3779b9u) ^ (data[2] * 0x85ebca6bu) ^ (data[3] * 0xc2b2ae35u);
+
+		size_t slot = hash & tableMask;
+		while (entries[slot] != ~0u) {
+			const VoxelVertex &existing = newVertices[entries[slot]];
+			if (core_memcmp(&v, &existing, sizeof(VoxelVertex)) == 0) {
+				newPos[i] = entries[slot];
+				if (!_normals.empty()) {
+					newNormals[entries[slot]] += _normals[i];
+				}
+				goto found;
+			}
+			slot = (slot + 1) & tableMask;
+		}
+		entries[slot] = (uint32_t)newVertices.size();
+		newPos[i] = (uint32_t)newVertices.size();
+		newVertices.push_back(v);
+		if (!_normals.empty()) {
+			newNormals.push_back(_normals[i]);
+		}
+	found:;
+	}
+
+	if (newVertices.size() == originalCount) {
+		return;
+	}
+	Log::debug("Deduplicated vertices: %zu -> %zu", originalCount, newVertices.size());
+
+	_vecVertices = core::move(newVertices);
+	if (!_normals.empty()) {
+		_normals = core::move(newNormals);
+		for (size_t i = 0; i < _normals.size(); ++i) {
+			float len = glm::length(_normals[i]);
+			if (len > 0.0001f) {
+				_normals[i] /= len;
+			}
+		}
+	}
+	for (size_t i = 0; i < _vecIndices.size(); ++i) {
+		_vecIndices[i] = newPos[_vecIndices[i]];
+	}
 }
 
 } // namespace voxel

@@ -59,6 +59,7 @@ public:
 	void setNormal(IndexType index, const glm::vec3 &normal);
 
 	void optimize();
+	void deduplicateVertices();
 
 	void clear();
 	bool isEmpty() const;

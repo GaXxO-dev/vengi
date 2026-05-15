@@ -54,6 +54,11 @@ struct ChunkMesh {
 			mesh[i].optimize();
 		}
 	}
+	void deduplicateVertices() {
+		for (int i = 0; i < Meshes; ++i) {
+			mesh[i].deduplicateVertices();
+		}
+	}
 };
 
 } // namespace voxel
