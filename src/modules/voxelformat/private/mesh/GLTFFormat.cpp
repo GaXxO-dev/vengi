@@ -609,21 +609,32 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 		return false;
 	}
 
+	const bool colorAsFloat = core::getVar(cfg::VoxformatColorAsFloat)->boolVal();
+
 	// Calculate buffer size needed
+	// Layout per mesh: [position float32 VEC3] [color uint8 VEC4 normalized OR float32 VEC4] [texcoord float32 VEC2] [indices]
+	// When colorAsFloat is false, colors are stored as normalized uint8 in a separate buffer view (deinterleaved).
+	// When colorAsFloat is true, colors are interleaved with positions as float32 (legacy behavior).
 	size_t bufferSize = 0;
+	enum class IndexFormat { Uint8, Uint16, Uint32 };
 	struct MeshInfo {
 		int meshExtIdx;
 		int subMeshIdx;
-		size_t vertexOffset;
-		size_t vertexSize;
+		size_t positionOffset;
+		size_t positionSize;
+		size_t colorOffset;
+		size_t colorSize;
+		size_t texcoordOffset;
+		size_t texcoordSize;
 		size_t indexOffset;
 		size_t indexSize;
 		int vertexCount;
 		int indexCount;
 		bool hasTexture;
-		bool useGreedyTexture; // true = use meshExt.texture + UVs, false = palette texture + paletteUV
+		bool useGreedyTexture;
 		int floatsPerVertex;
-		bool perColorMaterials; // true = split into per-color primitives with per-color materials
+		bool perColorMaterials;
+		IndexFormat indexFormat;
 	};
 	core::DynamicArray<MeshInfo> meshInfos;
 	meshInfos.reserve(totalMeshes);
@@ -636,6 +647,7 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 				continue;
 			}
 			MeshInfo info;
+			core_memset(&info, 0, sizeof(info));
 			info.meshExtIdx = mi;
 			info.subMeshIdx = i;
 			info.vertexCount = (int)mesh->getNoOfVertices();
@@ -643,27 +655,71 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 			info.useGreedyTexture =
 				withTexCoords && meshExt.texture && meshExt.texture->isLoaded() && !mesh->getUVVector().empty();
 			info.hasTexture = info.useGreedyTexture || withTexCoords;
-			info.floatsPerVertex = 3 + (withColor ? 4 : 0) + (info.hasTexture ? 2 : 0); // pos(3) [+ color(4)] [+ uv(2)]
 			info.perColorMaterials = withMaterials && !info.useGreedyTexture && info.hasTexture;
-			info.vertexOffset = bufferSize;
-			info.vertexSize = info.vertexCount * info.floatsPerVertex * sizeof(float);
-			bufferSize += info.vertexSize;
-			// index data
+			if (info.vertexCount < 256) {
+				info.indexFormat = IndexFormat::Uint8;
+			} else if (info.vertexCount < 65536) {
+				info.indexFormat = IndexFormat::Uint16;
+			} else {
+				info.indexFormat = IndexFormat::Uint32;
+			}
+
+			if (colorAsFloat) {
+				// Legacy interleaved layout: pos(3f) [+ color(4f)] [+ uv(2f)]
+				info.floatsPerVertex = 3 + (withColor ? 4 : 0) + (info.hasTexture ? 2 : 0);
+				info.positionOffset = bufferSize;
+				info.positionSize = info.vertexCount * info.floatsPerVertex * sizeof(float);
+				info.colorOffset = 0;
+				info.colorSize = 0;
+				info.texcoordOffset = 0;
+				info.texcoordSize = 0;
+				bufferSize += info.positionSize;
+			} else {
+				// Optimized deinterleaved layout
+				info.floatsPerVertex = 3 + (withColor ? 4 : 0) + (info.hasTexture ? 2 : 0);
+				// Position: float32 VEC3, stride=12
+				info.positionOffset = bufferSize;
+				info.positionSize = info.vertexCount * 3 * sizeof(float);
+				bufferSize += info.positionSize;
+				// Color: uint8 VEC4 normalized (4 bytes per vertex), separate buffer view
+				if (withColor) {
+					info.colorOffset = bufferSize;
+					info.colorSize = info.vertexCount * 4 * sizeof(uint8_t);
+					bufferSize += info.colorSize;
+				}
+				// Texcoord: float32 VEC2, separate buffer view (only when not using perColorMaterials palette UV)
+				if (info.hasTexture) {
+					info.texcoordOffset = bufferSize;
+					info.texcoordSize = info.vertexCount * 2 * sizeof(float);
+					bufferSize += info.texcoordSize;
+				}
+			}
+
+			// Index data
 			info.indexOffset = bufferSize;
-			info.indexSize = info.indexCount * sizeof(uint32_t);
+			switch (info.indexFormat) {
+			case IndexFormat::Uint8:
+				info.indexSize = info.indexCount * sizeof(uint8_t);
+				break;
+			case IndexFormat::Uint16:
+				info.indexSize = info.indexCount * sizeof(uint16_t);
+				break;
+			case IndexFormat::Uint32:
+				info.indexSize = info.indexCount * sizeof(uint32_t);
+				break;
+			}
 			bufferSize += info.indexSize;
 			meshInfos.push_back(info);
 		}
 	}
 
 	// Pre-scan: for meshes with perColorMaterials, determine used colors and per-color index counts
-	// We store indices grouped by color in the buffer (after the original indices)
 	struct PerColorIndexInfo {
 		uint8_t colorIdx;
 		int indexCount;
-		size_t bufferOffset; // offset in the main buffer
+		size_t bufferOffset;
+		IndexFormat indexFormat;
 	};
-	// Per mesh: array of per-color index infos
 	core::DynamicArray<core::DynamicArray<PerColorIndexInfo>> perColorIndices;
 	perColorIndices.resize(totalMeshes);
 
@@ -678,7 +734,6 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 		const voxel::VoxelVertex *vertices = mesh->getRawVertexData();
 		const voxel::IndexType *indices = mesh->getRawIndexData();
 
-		// Count indices per color (a triangle belongs to a color if its first vertex has that color)
 		int colorCounts[palette::PaletteMaxColors];
 		core_memset(colorCounts, 0, sizeof(colorCounts));
 		for (int t = 0; t < info.indexCount; t += 3) {
@@ -691,7 +746,18 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 				pci.colorIdx = (uint8_t)c;
 				pci.indexCount = colorCounts[c];
 				pci.bufferOffset = bufferSize + perColorBufferSize;
-				perColorBufferSize += colorCounts[c] * sizeof(uint32_t);
+				pci.indexFormat = info.indexFormat;
+				switch (info.indexFormat) {
+				case IndexFormat::Uint8:
+					perColorBufferSize += colorCounts[c] * sizeof(uint8_t);
+					break;
+				case IndexFormat::Uint16:
+					perColorBufferSize += colorCounts[c] * sizeof(uint16_t);
+					break;
+				case IndexFormat::Uint32:
+					perColorBufferSize += colorCounts[c] * sizeof(uint32_t);
+					break;
+				}
 				perColorIndices[mi].push_back(pci);
 			}
 		}
@@ -707,43 +773,106 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 		const voxel::IndexType *indices = mesh->getRawIndexData();
 		const scenegraph::SceneGraphNode &graphNode = sceneGraph.node(meshExt.nodeId);
 		const palette::Palette &palette = graphNode.palette();
-
-		float *vBuf = (float *)(buffer + info.vertexOffset);
-		const int stride = info.floatsPerVertex;
-		const voxel::UVArray &uvs = mesh->getUVVector();
 		const glm::vec3 pivotOffset = glm::vec3(mesh->getOffset()) - meshExt.pivot * meshExt.size;
-		for (int j = 0; j < info.vertexCount; ++j) {
-			glm::vec3 pos = vertices[j].position;
-			if (meshExt.applyTransform) {
-				pos += pivotOffset;
+
+		if (colorAsFloat) {
+			// Legacy interleaved layout: [pos.xyz color.rgba texcoord.uv] as float32
+			float *vBuf = (float *)(buffer + info.positionOffset);
+			const int stride = info.floatsPerVertex;
+			const voxel::UVArray &uvs = mesh->getUVVector();
+			for (int j = 0; j < info.vertexCount; ++j) {
+				glm::vec3 pos = vertices[j].position;
+				if (meshExt.applyTransform) {
+					pos += pivotOffset;
+				}
+				pos *= scale;
+				int off = 0;
+				vBuf[j * stride + off++] = pos.x;
+				vBuf[j * stride + off++] = pos.y;
+				vBuf[j * stride + off++] = pos.z;
+				if (withColor) {
+					const color::RGBA rgba = palette.color(vertices[j].colorIndex);
+					vBuf[j * stride + off++] = (float)rgba.r / 255.0f;
+					vBuf[j * stride + off++] = (float)rgba.g / 255.0f;
+					vBuf[j * stride + off++] = (float)rgba.b / 255.0f;
+					vBuf[j * stride + off++] = (float)rgba.a / 255.0f;
+				}
+				if (info.hasTexture) {
+					if (info.useGreedyTexture) {
+						vBuf[j * stride + off++] = uvs[j].x;
+						vBuf[j * stride + off++] = 1.0f - uvs[j].y;
+					} else {
+						const glm::vec2 uv = paletteUV(vertices[j].colorIndex);
+						vBuf[j * stride + off++] = uv.x;
+						vBuf[j * stride + off++] = uv.y;
+					}
+				}
 			}
-			pos *= scale;
-			int off = 0;
-			vBuf[j * stride + off++] = pos.x;
-			vBuf[j * stride + off++] = pos.y;
-			vBuf[j * stride + off++] = pos.z;
+		} else {
+			// Optimized deinterleaved layout
+			// Position buffer: float32 VEC3
+			float *posBuf = (float *)(buffer + info.positionOffset);
+			for (int j = 0; j < info.vertexCount; ++j) {
+				glm::vec3 pos = vertices[j].position;
+				if (meshExt.applyTransform) {
+					pos += pivotOffset;
+				}
+				pos *= scale;
+				posBuf[j * 3 + 0] = pos.x;
+				posBuf[j * 3 + 1] = pos.y;
+				posBuf[j * 3 + 2] = pos.z;
+			}
+			// Color buffer: uint8 VEC4 normalized
 			if (withColor) {
-				const color::RGBA rgba = palette.color(vertices[j].colorIndex);
-				vBuf[j * stride + off++] = (float)rgba.r / 255.0f;
-				vBuf[j * stride + off++] = (float)rgba.g / 255.0f;
-				vBuf[j * stride + off++] = (float)rgba.b / 255.0f;
-				vBuf[j * stride + off++] = (float)rgba.a / 255.0f;
+				uint8_t *colBuf = buffer + info.colorOffset;
+				for (int j = 0; j < info.vertexCount; ++j) {
+					const color::RGBA rgba = palette.color(vertices[j].colorIndex);
+					colBuf[j * 4 + 0] = rgba.r;
+					colBuf[j * 4 + 1] = rgba.g;
+					colBuf[j * 4 + 2] = rgba.b;
+					colBuf[j * 4 + 3] = rgba.a;
+				}
 			}
+			// Texcoord buffer: float32 VEC2
 			if (info.hasTexture) {
-				if (info.useGreedyTexture) {
-					vBuf[j * stride + off++] = uvs[j].x;
-					vBuf[j * stride + off++] = 1.0f - uvs[j].y; // GLTF uses top-left origin
-				} else {
-					const glm::vec2 uv = paletteUV(vertices[j].colorIndex);
-					vBuf[j * stride + off++] = uv.x;
-					vBuf[j * stride + off++] = uv.y;
+				float *uvBuf = (float *)(buffer + info.texcoordOffset);
+				const voxel::UVArray &uvs = mesh->getUVVector();
+				for (int j = 0; j < info.vertexCount; ++j) {
+					if (info.useGreedyTexture) {
+						uvBuf[j * 2 + 0] = uvs[j].x;
+						uvBuf[j * 2 + 1] = 1.0f - uvs[j].y;
+					} else {
+						const glm::vec2 uv = paletteUV(vertices[j].colorIndex);
+						uvBuf[j * 2 + 0] = uv.x;
+						uvBuf[j * 2 + 1] = uv.y;
+					}
 				}
 			}
 		}
 
-		uint32_t *iBuf = (uint32_t *)(buffer + info.indexOffset);
-		for (int j = 0; j < info.indexCount; ++j) {
-			iBuf[j] = (uint32_t)indices[j];
+		// Index data - write with smallest possible type
+		switch (info.indexFormat) {
+		case IndexFormat::Uint8: {
+			uint8_t *iBuf = buffer + info.indexOffset;
+			for (int j = 0; j < info.indexCount; ++j) {
+				iBuf[j] = (uint8_t)indices[j];
+			}
+			break;
+		}
+		case IndexFormat::Uint16: {
+			uint16_t *iBuf = (uint16_t *)(buffer + info.indexOffset);
+			for (int j = 0; j < info.indexCount; ++j) {
+				iBuf[j] = (uint16_t)indices[j];
+			}
+			break;
+		}
+		case IndexFormat::Uint32: {
+			uint32_t *iBuf = (uint32_t *)(buffer + info.indexOffset);
+			for (int j = 0; j < info.indexCount; ++j) {
+				iBuf[j] = (uint32_t)indices[j];
+			}
+			break;
+		}
 		}
 	}
 
@@ -758,28 +887,50 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 		const voxel::VoxelVertex *vertices = mesh->getRawVertexData();
 		const voxel::IndexType *indices = mesh->getRawIndexData();
 
-		// Write per-color index arrays
-		// First set up write pointers for each color
-		core::DynamicArray<uint32_t *> colorWritePtrs;
-		colorWritePtrs.resize(perColorIndices[mi].size());
-		for (int ci = 0; ci < (int)perColorIndices[mi].size(); ++ci) {
-			colorWritePtrs[ci] = (uint32_t *)(buffer + perColorIndices[mi][ci].bufferOffset);
-		}
 		// Build a lookup from colorIdx -> index in perColorIndices[mi]
 		int colorToSlot[palette::PaletteMaxColors];
 		core_memset(colorToSlot, -1, sizeof(colorToSlot));
 		for (int ci = 0; ci < (int)perColorIndices[mi].size(); ++ci) {
 			colorToSlot[perColorIndices[mi][ci].colorIdx] = ci;
 		}
-		// Distribute triangles
+		// Use byte offsets for compact index writing
+		core::DynamicArray<size_t> colorWriteOffsets;
+		colorWriteOffsets.resize(perColorIndices[mi].size());
+		for (int ci = 0; ci < (int)perColorIndices[mi].size(); ++ci) {
+			colorWriteOffsets[ci] = perColorIndices[mi][ci].bufferOffset;
+		}
+		// Distribute triangles with appropriate index type size
+		const size_t indexTypeSize = info.indexFormat == IndexFormat::Uint8 ? sizeof(uint8_t)
+			: info.indexFormat == IndexFormat::Uint16 ? sizeof(uint16_t)
+			: sizeof(uint32_t);
 		for (int t = 0; t < info.indexCount; t += 3) {
 			uint8_t c = vertices[indices[t]].colorIndex;
 			int slot = colorToSlot[c];
-			uint32_t *ptr = colorWritePtrs[slot];
-			ptr[0] = (uint32_t)indices[t];
-			ptr[1] = (uint32_t)indices[t + 1];
-			ptr[2] = (uint32_t)indices[t + 2];
-			colorWritePtrs[slot] += 3;
+			size_t &offset = colorWriteOffsets[slot];
+			switch (info.indexFormat) {
+			case IndexFormat::Uint8: {
+				uint8_t *ptr = buffer + offset;
+				ptr[0] = (uint8_t)indices[t];
+				ptr[1] = (uint8_t)indices[t + 1];
+				ptr[2] = (uint8_t)indices[t + 2];
+				break;
+			}
+			case IndexFormat::Uint16: {
+				uint16_t *ptr = (uint16_t *)(buffer + offset);
+				ptr[0] = (uint16_t)indices[t];
+				ptr[1] = (uint16_t)indices[t + 1];
+				ptr[2] = (uint16_t)indices[t + 2];
+				break;
+			}
+			case IndexFormat::Uint32: {
+				uint32_t *ptr = (uint32_t *)(buffer + offset);
+				ptr[0] = (uint32_t)indices[t];
+				ptr[1] = (uint32_t)indices[t + 1];
+				ptr[2] = (uint32_t)indices[t + 2];
+				break;
+			}
+			}
+			offset += 3 * indexTypeSize;
 		}
 	}
 
@@ -866,11 +1017,12 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 			extraIndexBVs += (int)perColorIndices[mi].size();
 		}
 	}
-	// Base: each mesh gets position BV+acc, [color BV+acc], [texcoord BV+acc], index BV+acc
-	// For perColorMaterials meshes, we still need the vertex BVs but replace the single index BV+acc
-	// with N per-color index BV+accs. The original index BV is not needed for those meshes.
-	// So: vertex BVs/accs stay the same, but index BVs/accs change.
+	// Count buffer views and accessors
+	// Legacy interleaved: 1 BV per attribute (but all pointing into the same interleaved buffer), plus separate accessors
+	// Optimized deinterleaved: separate BV per attribute with its own buffer slice
+	// Both paths use the same number of BVs: one per attribute per mesh
 	int vertexBVCount = totalMeshes + (withColor ? totalMeshes : 0) + texturedMeshCount;
+	int vertexAccessorCount = vertexBVCount;
 	int indexBVCount = 0;
 	for (int mi = 0; mi < (int)meshInfos.size(); ++mi) {
 		if (meshInfos[mi].perColorMaterials) {
@@ -880,7 +1032,7 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 		}
 	}
 	totalBufferViews = vertexBVCount + indexBVCount;
-	totalAccessors = vertexBVCount + indexBVCount;
+	totalAccessors = vertexAccessorCount + indexBVCount;
 
 	cgltf_buffer gltfBuffer;
 	core_memset(&gltfBuffer, 0, sizeof(gltfBuffer));
@@ -1134,88 +1286,176 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 		}
 	}
 
+	auto getIndexComponentType = [](IndexFormat fmt) -> cgltf_component_type {
+		switch (fmt) {
+		case IndexFormat::Uint8:
+			return cgltf_component_type_r_8u;
+		case IndexFormat::Uint16:
+			return cgltf_component_type_r_16u;
+		default:
+			return cgltf_component_type_r_32u;
+		}
+	};
+	auto getIndexTypeSize = [](IndexFormat fmt) -> size_t {
+		switch (fmt) {
+		case IndexFormat::Uint8:
+			return sizeof(uint8_t);
+		case IndexFormat::Uint16:
+			return sizeof(uint16_t);
+		default:
+			return sizeof(uint32_t);
+		}
+	};
+
 	int bvIdx = 0, accIdx = 0, primIdx = 0;
-	int texIdx = totalPerColorMaterials; // non-perColor materials start after per-color ones
+	int texIdx = totalPerColorMaterials;
 	for (int mi = 0; mi < (int)meshInfos.size(); ++mi) {
 		const MeshInfo &info = meshInfos[mi];
-		const int stride = info.floatsPerVertex;
-		const int strideBytes = stride * (int)sizeof(float);
+		int firstPrimIdx = primIdx;
 
-		// Position buffer view (interleaved, stride = floatsPerVertex * 4)
-		bufferViews[bvIdx].buffer = &gltfBuffer;
-		bufferViews[bvIdx].offset = info.vertexOffset;
-		bufferViews[bvIdx].size = info.vertexSize;
-		bufferViews[bvIdx].stride = strideBytes;
-		bufferViews[bvIdx].type = cgltf_buffer_view_type_vertices;
+		// ====== Buffer views and accessors ======
+		int posAccIdx = -1;
+		int colAccIdx = -1;
+		int uvAccIdx = -1;
 
-		// Position accessor
-		accessors[accIdx].buffer_view = &bufferViews[bvIdx];
-		accessors[accIdx].component_type = cgltf_component_type_r_32f;
-		accessors[accIdx].type = cgltf_type_vec3;
-		accessors[accIdx].count = info.vertexCount;
-		accessors[accIdx].has_min = true;
-		accessors[accIdx].has_max = true;
-		float *vBuf = (float *)(buffer + info.vertexOffset);
-		accessors[accIdx].min[0] = accessors[accIdx].min[1] = accessors[accIdx].min[2] = FLT_MAX;
-		accessors[accIdx].max[0] = accessors[accIdx].max[1] = accessors[accIdx].max[2] = -FLT_MAX;
-		for (int j = 0; j < info.vertexCount; ++j) {
-			for (int k = 0; k < 3; ++k) {
-				float v = vBuf[j * stride + k];
-				if (v < accessors[accIdx].min[k])
-					accessors[accIdx].min[k] = v;
-				if (v > accessors[accIdx].max[k])
-					accessors[accIdx].max[k] = v;
+		if (colorAsFloat) {
+			// Legacy interleaved layout: [pos.xyz color.rgba texcoord.uv] as float32
+			const int stride = info.floatsPerVertex;
+			const int strideBytes = stride * (int)sizeof(float);
+
+			// Position buffer view (interleaved)
+			bufferViews[bvIdx].buffer = &gltfBuffer;
+			bufferViews[bvIdx].offset = info.positionOffset;
+			bufferViews[bvIdx].size = info.positionSize;
+			bufferViews[bvIdx].stride = strideBytes;
+			bufferViews[bvIdx].type = cgltf_buffer_view_type_vertices;
+
+			accessors[accIdx].buffer_view = &bufferViews[bvIdx];
+			accessors[accIdx].component_type = cgltf_component_type_r_32f;
+			accessors[accIdx].type = cgltf_type_vec3;
+			accessors[accIdx].count = info.vertexCount;
+			accessors[accIdx].has_min = true;
+			accessors[accIdx].has_max = true;
+			float *vBuf = (float *)(buffer + info.positionOffset);
+			accessors[accIdx].min[0] = accessors[accIdx].min[1] = accessors[accIdx].min[2] = FLT_MAX;
+			accessors[accIdx].max[0] = accessors[accIdx].max[1] = accessors[accIdx].max[2] = -FLT_MAX;
+			for (int j = 0; j < info.vertexCount; ++j) {
+				for (int k = 0; k < 3; ++k) {
+					float v = vBuf[j * stride + k];
+					if (v < accessors[accIdx].min[k])
+						accessors[accIdx].min[k] = v;
+					if (v > accessors[accIdx].max[k])
+						accessors[accIdx].max[k] = v;
+				}
+			}
+			posAccIdx = accIdx;
+			++bvIdx;
+			++accIdx;
+
+			// Color buffer view + accessor (interleaved, float32 VEC4)
+			if (withColor) {
+				bufferViews[bvIdx].buffer = &gltfBuffer;
+				bufferViews[bvIdx].offset = info.positionOffset;
+				bufferViews[bvIdx].size = info.positionSize;
+				bufferViews[bvIdx].stride = strideBytes;
+				bufferViews[bvIdx].type = cgltf_buffer_view_type_vertices;
+
+				accessors[accIdx].buffer_view = &bufferViews[bvIdx];
+				accessors[accIdx].component_type = cgltf_component_type_r_32f;
+				accessors[accIdx].type = cgltf_type_vec4;
+				accessors[accIdx].count = info.vertexCount;
+				accessors[accIdx].offset = 3 * sizeof(float);
+				colAccIdx = accIdx;
+				++bvIdx;
+				++accIdx;
+			}
+
+			// Texcoord buffer view + accessor (interleaved, float32 VEC2)
+			if (info.hasTexture) {
+				bufferViews[bvIdx].buffer = &gltfBuffer;
+				bufferViews[bvIdx].offset = info.positionOffset;
+				bufferViews[bvIdx].size = info.positionSize;
+				bufferViews[bvIdx].stride = strideBytes;
+				bufferViews[bvIdx].type = cgltf_buffer_view_type_vertices;
+
+				accessors[accIdx].buffer_view = &bufferViews[bvIdx];
+				accessors[accIdx].component_type = cgltf_component_type_r_32f;
+				accessors[accIdx].type = cgltf_type_vec2;
+				accessors[accIdx].count = info.vertexCount;
+				accessors[accIdx].offset = (3 + (withColor ? 4 : 0)) * sizeof(float);
+				uvAccIdx = accIdx;
+				++bvIdx;
+				++accIdx;
+			}
+		} else {
+			// Optimized deinterleaved layout: separate buffer views per attribute
+			// Position: float32 VEC3, stride=12
+			bufferViews[bvIdx].buffer = &gltfBuffer;
+			bufferViews[bvIdx].offset = info.positionOffset;
+			bufferViews[bvIdx].size = info.positionSize;
+			bufferViews[bvIdx].stride = 3 * sizeof(float);
+			bufferViews[bvIdx].type = cgltf_buffer_view_type_vertices;
+
+			accessors[accIdx].buffer_view = &bufferViews[bvIdx];
+			accessors[accIdx].component_type = cgltf_component_type_r_32f;
+			accessors[accIdx].type = cgltf_type_vec3;
+			accessors[accIdx].count = info.vertexCount;
+			accessors[accIdx].has_min = true;
+			accessors[accIdx].has_max = true;
+			float *posBuf = (float *)(buffer + info.positionOffset);
+			accessors[accIdx].min[0] = accessors[accIdx].min[1] = accessors[accIdx].min[2] = FLT_MAX;
+			accessors[accIdx].max[0] = accessors[accIdx].max[1] = accessors[accIdx].max[2] = -FLT_MAX;
+			for (int j = 0; j < info.vertexCount; ++j) {
+				for (int k = 0; k < 3; ++k) {
+					float v = posBuf[j * 3 + k];
+					if (v < accessors[accIdx].min[k])
+						accessors[accIdx].min[k] = v;
+					if (v > accessors[accIdx].max[k])
+						accessors[accIdx].max[k] = v;
+				}
+			}
+			posAccIdx = accIdx;
+			++bvIdx;
+			++accIdx;
+
+			// Color: uint8 VEC4 normalized, stride=4, separate buffer view
+			if (withColor) {
+				bufferViews[bvIdx].buffer = &gltfBuffer;
+				bufferViews[bvIdx].offset = info.colorOffset;
+				bufferViews[bvIdx].size = info.colorSize;
+				bufferViews[bvIdx].stride = 4;
+				bufferViews[bvIdx].type = cgltf_buffer_view_type_vertices;
+
+				accessors[accIdx].buffer_view = &bufferViews[bvIdx];
+				accessors[accIdx].component_type = cgltf_component_type_r_8u;
+				accessors[accIdx].type = cgltf_type_vec4;
+				accessors[accIdx].count = info.vertexCount;
+				accessors[accIdx].normalized = true;
+				colAccIdx = accIdx;
+				++bvIdx;
+				++accIdx;
+			}
+
+			// Texcoord: float32 VEC2, stride=8, separate buffer view
+			if (info.hasTexture) {
+				bufferViews[bvIdx].buffer = &gltfBuffer;
+				bufferViews[bvIdx].offset = info.texcoordOffset;
+				bufferViews[bvIdx].size = info.texcoordSize;
+				bufferViews[bvIdx].stride = 2 * sizeof(float);
+				bufferViews[bvIdx].type = cgltf_buffer_view_type_vertices;
+
+				accessors[accIdx].buffer_view = &bufferViews[bvIdx];
+				accessors[accIdx].component_type = cgltf_component_type_r_32f;
+				accessors[accIdx].type = cgltf_type_vec2;
+				accessors[accIdx].count = info.vertexCount;
+				uvAccIdx = accIdx;
+				++bvIdx;
+				++accIdx;
 			}
 		}
-		int posAccIdx = accIdx;
-		++bvIdx;
-		++accIdx;
 
-		// Color buffer view + accessor (if withColor)
-		int colAccIdx = -1;
-		if (withColor) {
-			bufferViews[bvIdx].buffer = &gltfBuffer;
-			bufferViews[bvIdx].offset = info.vertexOffset;
-			bufferViews[bvIdx].size = info.vertexSize;
-			bufferViews[bvIdx].stride = strideBytes;
-			bufferViews[bvIdx].type = cgltf_buffer_view_type_vertices;
-
-			// Color accessor
-			accessors[accIdx].buffer_view = &bufferViews[bvIdx];
-			accessors[accIdx].component_type = cgltf_component_type_r_32f;
-			accessors[accIdx].type = cgltf_type_vec4;
-			accessors[accIdx].count = info.vertexCount;
-			accessors[accIdx].offset = 3 * sizeof(float);
-			/* stride is defined on buffer view */
-			colAccIdx = accIdx;
-			++bvIdx;
-			++accIdx;
-		}
-
-		// Texcoord buffer view + accessor (if textured)
-		int uvAccIdx = -1;
-		if (info.hasTexture) {
-			bufferViews[bvIdx].buffer = &gltfBuffer;
-			bufferViews[bvIdx].offset = info.vertexOffset;
-			bufferViews[bvIdx].size = info.vertexSize;
-			bufferViews[bvIdx].stride = strideBytes;
-			bufferViews[bvIdx].type = cgltf_buffer_view_type_vertices;
-
-			accessors[accIdx].buffer_view = &bufferViews[bvIdx];
-			accessors[accIdx].component_type = cgltf_component_type_r_32f;
-			accessors[accIdx].type = cgltf_type_vec2;
-			accessors[accIdx].count = info.vertexCount;
-			accessors[accIdx].offset = (3 + (withColor ? 4 : 0)) * sizeof(float);
-			/* stride is defined on buffer view */
-			uvAccIdx = accIdx;
-			++bvIdx;
-			++accIdx;
-		}
-
-		// Index buffer view(s) and accessor(s)
-		int firstPrimIdx = primIdx;
+		// ====== Index buffer views and primitives ======
 		if (info.perColorMaterials) {
-			// Per-color index buffers - one primitive per used color
 			const ChunkMeshExt &meshExt = meshes[info.meshExtIdx];
 			const scenegraph::SceneGraphNode &graphNode = sceneGraph.node(meshExt.nodeId);
 			const palette::Palette &pal = graphNode.palette();
@@ -1225,13 +1465,14 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 
 			for (int ci = 0; ci < (int)perColorIndices[mi].size(); ++ci) {
 				const PerColorIndexInfo &pci = perColorIndices[mi][ci];
+
 				bufferViews[bvIdx].buffer = &gltfBuffer;
 				bufferViews[bvIdx].offset = pci.bufferOffset;
-				bufferViews[bvIdx].size = pci.indexCount * sizeof(uint32_t);
+				bufferViews[bvIdx].size = pci.indexCount * getIndexTypeSize(pci.indexFormat);
 				bufferViews[bvIdx].type = cgltf_buffer_view_type_indices;
 
 				accessors[accIdx].buffer_view = &bufferViews[bvIdx];
-				accessors[accIdx].component_type = cgltf_component_type_r_32u;
+				accessors[accIdx].component_type = getIndexComponentType(pci.indexFormat);
 				accessors[accIdx].type = cgltf_type_scalar;
 				accessors[accIdx].count = pci.indexCount;
 
@@ -1270,7 +1511,7 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 			bufferViews[bvIdx].type = cgltf_buffer_view_type_indices;
 
 			accessors[accIdx].buffer_view = &bufferViews[bvIdx];
-			accessors[accIdx].component_type = cgltf_component_type_r_32u;
+			accessors[accIdx].component_type = getIndexComponentType(info.indexFormat);
 			accessors[accIdx].type = cgltf_type_scalar;
 			accessors[accIdx].count = info.indexCount;
 			int idxAccIdx = accIdx;
@@ -1338,7 +1579,6 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 				gltfMaterials[texIdx].pbr_metallic_roughness.base_color_factor[3] = 1.0f;
 				gltfMaterials[texIdx].pbr_metallic_roughness.roughness_factor = 1.0f;
 				gltfMaterials[texIdx].pbr_metallic_roughness.metallic_factor = 1.0f;
-				// mesh[0] = opaque (VoxelType::Generic), mesh[1] = transparent (VoxelType::Transparent)
 				if (info.subMeshIdx == 0) {
 					gltfMaterials[texIdx].alpha_mode = cgltf_alpha_mode_opaque;
 				} else {
@@ -1348,7 +1588,6 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 				if (withMaterials && !info.useGreedyTexture) {
 					const scenegraph::SceneGraphNode &gn = sceneGraph.node(meshExt.nodeId);
 					const palette::Palette &pal = gn.palette();
-					// MR texture
 					uint8_t mrPixels[palette::PaletteMaxColors * 4];
 					bool hasMR = false;
 					for (int i = 0; i < palette::PaletteMaxColors; i++) {
@@ -1376,25 +1615,23 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 						gltfTextures[imgIdx].sampler = gltfTextureSampler;
 						gltfMaterials[texIdx].pbr_metallic_roughness.metallic_roughness_texture.texture =
 							&gltfTextures[imgIdx];
+						gltfMaterials[texIdx].pbr_metallic_roughness.metallic_roughness_texture.scale = 1.0f;
 						++imgIdx;
 					}
-					// Emissive texture
+					bool hasEmissive = false;
 					uint8_t emPixels[palette::PaletteMaxColors * 4];
-					bool hasEmit = false;
 					for (int i = 0; i < palette::PaletteMaxColors; i++) {
 						const palette::Material &m = pal.material(i);
-						float emit = m.has(palette::MaterialProperty::MaterialEmit)
-										 ? m.value(palette::MaterialProperty::MaterialEmit)
-										 : 0.0f;
-						if (emit > 0.0f)
-							hasEmit = true;
-						const color::RGBA c = pal.color(i);
-						emPixels[i * 4 + 0] = (uint8_t)((float)c.r * emit);
-						emPixels[i * 4 + 1] = (uint8_t)((float)c.g * emit);
-						emPixels[i * 4 + 2] = (uint8_t)((float)c.b * emit);
+						if (m.has(palette::MaterialProperty::MaterialEmit)) {
+							hasEmissive = true;
+						}
+						color::RGBA color = pal.color(i);
+						emPixels[i * 4 + 0] = color.r;
+						emPixels[i * 4 + 1] = color.g;
+						emPixels[i * 4 + 2] = color.b;
 						emPixels[i * 4 + 3] = 255;
 					}
-					if (hasEmit) {
+					if (hasEmissive) {
 						image::Image emImage("emissive");
 						emImage.loadRGBA(emPixels, palette::PaletteMaxColors, 1);
 						const core::String emUri = "data:image/png;base64," + emImage.pngBase64();
@@ -1406,6 +1643,10 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 						gltfMaterials[texIdx].emissive_factor[0] = 1.0f;
 						gltfMaterials[texIdx].emissive_factor[1] = 1.0f;
 						gltfMaterials[texIdx].emissive_factor[2] = 1.0f;
+						if (pal.material(0).has(palette::MaterialProperty::MaterialEmit)) {
+							gltfMaterials[texIdx].has_emissive_strength = true;
+							gltfMaterials[texIdx].emissive_strength.emissive_strength = pal.material(0).value(palette::MaterialProperty::MaterialEmit);
+						}
 						++imgIdx;
 					}
 				}
@@ -1435,7 +1676,6 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 			}
 		}
 	}
-
 	// Set up group nodes
 	for (int gi = 0; gi < (int)groupNodeIds.size(); ++gi) {
 		int gltfIdx = totalMeshes + gi;
@@ -1983,7 +2223,7 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 	return success;
 }
 
-bool GLTFFormat::savePointCloud(const scenegraph::SceneGraph &sceneGraph, const PointCloud &pointCloud,
+ bool GLTFFormat::savePointCloud(const scenegraph::SceneGraph &sceneGraph, const PointCloud &pointCloud,
 								const core::String &filename, const io::ArchivePtr &archive, const glm::vec3 &scale,
 								bool withColor) const {
 	if (pointCloud.empty()) {
@@ -1991,27 +2231,57 @@ bool GLTFFormat::savePointCloud(const scenegraph::SceneGraph &sceneGraph, const 
 		return false;
 	}
 
+	const bool colorAsFloat = core::getVar(cfg::VoxformatColorAsFloat)->boolVal();
 	const int vertexCount = (int)pointCloud.size();
-	// position(3f) + color(4f) = 7 floats per vertex
-	const size_t bufferSize = vertexCount * 7 * sizeof(float);
-	uint8_t *buffer = (uint8_t *)core_malloc(bufferSize);
-	float *vBuf = (float *)buffer;
 
+	size_t bufferSize;
+	size_t positionSize = vertexCount * 3 * sizeof(float);
+	size_t colorSize = 0;
+	if (colorAsFloat) {
+		colorSize = vertexCount * 4 * sizeof(float);
+	} else {
+		colorSize = vertexCount * 4 * sizeof(uint8_t);
+	}
+	bufferSize = positionSize + colorSize;
+	uint8_t *buffer = (uint8_t *)core_malloc(bufferSize);
+
+	float *posBuf = (float *)(buffer);
 	for (int i = 0; i < vertexCount; ++i) {
 		const glm::vec3 pos = pointCloud[i].position * scale;
-		vBuf[i * 7 + 0] = pos.x;
-		vBuf[i * 7 + 1] = pos.y;
-		vBuf[i * 7 + 2] = pos.z;
-		if (withColor) {
-			vBuf[i * 7 + 3] = (float)pointCloud[i].color.r / 255.0f;
-			vBuf[i * 7 + 4] = (float)pointCloud[i].color.g / 255.0f;
-			vBuf[i * 7 + 5] = (float)pointCloud[i].color.b / 255.0f;
-			vBuf[i * 7 + 6] = (float)pointCloud[i].color.a / 255.0f;
-		} else {
-			vBuf[i * 7 + 3] = 1.0f;
-			vBuf[i * 7 + 4] = 1.0f;
-			vBuf[i * 7 + 5] = 1.0f;
-			vBuf[i * 7 + 6] = 1.0f;
+		posBuf[i * 3 + 0] = pos.x;
+		posBuf[i * 3 + 1] = pos.y;
+		posBuf[i * 3 + 2] = pos.z;
+	}
+
+	if (colorAsFloat) {
+		float *colBuf = (float *)(buffer + positionSize);
+		for (int i = 0; i < vertexCount; ++i) {
+			if (withColor) {
+				colBuf[i * 4 + 0] = (float)pointCloud[i].color.r / 255.0f;
+				colBuf[i * 4 + 1] = (float)pointCloud[i].color.g / 255.0f;
+				colBuf[i * 4 + 2] = (float)pointCloud[i].color.b / 255.0f;
+				colBuf[i * 4 + 3] = (float)pointCloud[i].color.a / 255.0f;
+			} else {
+				colBuf[i * 4 + 0] = 1.0f;
+				colBuf[i * 4 + 1] = 1.0f;
+				colBuf[i * 4 + 2] = 1.0f;
+				colBuf[i * 4 + 3] = 1.0f;
+			}
+		}
+	} else {
+		uint8_t *colBuf = buffer + positionSize;
+		for (int i = 0; i < vertexCount; ++i) {
+			if (withColor) {
+				colBuf[i * 4 + 0] = pointCloud[i].color.r;
+				colBuf[i * 4 + 1] = pointCloud[i].color.g;
+				colBuf[i * 4 + 2] = pointCloud[i].color.b;
+				colBuf[i * 4 + 3] = pointCloud[i].color.a;
+			} else {
+				colBuf[i * 4 + 0] = 255;
+				colBuf[i * 4 + 1] = 255;
+				colBuf[i * 4 + 2] = 255;
+				colBuf[i * 4 + 3] = 255;
+			}
 		}
 	}
 
@@ -2026,15 +2296,19 @@ bool GLTFFormat::savePointCloud(const scenegraph::SceneGraph &sceneGraph, const 
 	// Position buffer view
 	bufferViews[0].buffer = &gltfBuffer;
 	bufferViews[0].offset = 0;
-	bufferViews[0].size = bufferSize;
-	bufferViews[0].stride = 7 * sizeof(float);
+	bufferViews[0].size = positionSize;
+	bufferViews[0].stride = 3 * sizeof(float);
 	bufferViews[0].type = cgltf_buffer_view_type_vertices;
 
 	// Color buffer view
 	bufferViews[1].buffer = &gltfBuffer;
-	bufferViews[1].offset = 0;
-	bufferViews[1].size = bufferSize;
-	bufferViews[1].stride = 7 * sizeof(float);
+	bufferViews[1].offset = positionSize;
+	bufferViews[1].size = colorSize;
+	if (colorAsFloat) {
+		bufferViews[1].stride = 4 * sizeof(float);
+	} else {
+		bufferViews[1].stride = 4;
+	}
 	bufferViews[1].type = cgltf_buffer_view_type_vertices;
 
 	cgltf_accessor accessors[2];
@@ -2051,7 +2325,7 @@ bool GLTFFormat::savePointCloud(const scenegraph::SceneGraph &sceneGraph, const 
 	accessors[0].max[0] = accessors[0].max[1] = accessors[0].max[2] = -FLT_MAX;
 	for (int i = 0; i < vertexCount; ++i) {
 		for (int k = 0; k < 3; ++k) {
-			float v = vBuf[i * 7 + k];
+			float v = posBuf[i * 3 + k];
 			if (v < accessors[0].min[k])
 				accessors[0].min[k] = v;
 			if (v > accessors[0].max[k])
@@ -2061,10 +2335,14 @@ bool GLTFFormat::savePointCloud(const scenegraph::SceneGraph &sceneGraph, const 
 
 	// Color accessor
 	accessors[1].buffer_view = &bufferViews[1];
-	accessors[1].component_type = cgltf_component_type_r_32f;
+	if (colorAsFloat) {
+		accessors[1].component_type = cgltf_component_type_r_32f;
+	} else {
+		accessors[1].component_type = cgltf_component_type_r_8u;
+		accessors[1].normalized = true;
+	}
 	accessors[1].type = cgltf_type_vec4;
 	accessors[1].count = vertexCount;
-	accessors[1].offset = 3 * sizeof(float);
 
 	cgltf_attribute attrs[2];
 	core_memset(attrs, 0, sizeof(attrs));
