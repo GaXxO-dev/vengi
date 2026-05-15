@@ -321,4 +321,10 @@ TEST_F(MeshFormatTest, testForceOpaque) {
 	EXPECT_EQ(255, opaque.a) << "forceOpaque should set even very low alpha to 255";
 }
 
+TEST_F(MeshFormatTest, testPivotFromMode) {
+	EXPECT_EQ(glm::vec3(0.0f, 0.0f, 0.0f), MeshFormat::pivotFromMode(MeshFormat::PivotMode::Corner));
+	EXPECT_EQ(glm::vec3(0.5f, 0.5f, 0.5f), MeshFormat::pivotFromMode(MeshFormat::PivotMode::Center));
+	EXPECT_EQ(glm::vec3(0.5f, 0.0f, 0.5f), MeshFormat::pivotFromMode(MeshFormat::PivotMode::BottomCenter));
+}
+
 } // namespace voxelformat

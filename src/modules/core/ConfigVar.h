@@ -121,6 +121,7 @@ constexpr const char *VoxformatWithtexcoords = "voxformat_withtexcoords";
 constexpr const char *VoxformatPointCloud = "voxformat_pointcloud";
 constexpr const char *VoxformatPointCloudSize = "voxformat_pointcloudsize";
 constexpr const char *VoxformatTransform = "voxformat_transform_mesh";
+constexpr const char *VoxformatPivot = "voxformat_pivot";
 constexpr const char *VoxformatOptimize = "voxformat_optimize";
 constexpr const char *VoxformatMeshSimplify = "voxformat_mesh_simplify";
 constexpr const char *VoxformatFillHollow = "voxformat_fillhollow";

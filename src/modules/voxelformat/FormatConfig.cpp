@@ -115,6 +115,9 @@ bool FormatConfig::init() {
 	const core::VarDef voxformatTransform(cfg::VoxformatTransform, true, N_("Apply transformations"),
 										  N_("Apply the scene graph transform to mesh exports"), core::CV_NOPERSIST);
 	core::registerVar(voxformatTransform);
+	const core::VarDef voxformatPivot(cfg::VoxformatPivot, 0, 0, 2, N_("Pivot mode"),
+									  N_("0 = corner, 1 = center, 2 = bottom center"), core::CV_NOPERSIST);
+	core::registerVar(voxformatPivot);
 	const core::VarDef voxformatOptimize(cfg::VoxformatOptimize, false, N_("Apply optimizations"),
 										 N_("Apply mesh optimization steps to meshes"), core::CV_NOPERSIST);
 	core::registerVar(voxformatOptimize);

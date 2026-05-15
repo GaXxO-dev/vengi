@@ -153,9 +153,10 @@ bool STLFormat::voxelizeGroups(const core::String &filename, const io::ArchivePt
 
 bool STLFormat::writeVertex(io::SeekableWriteStream &stream, const ChunkMeshExt &meshExt, const voxel::VoxelVertex &v1,
 							const scenegraph::SceneGraphTransform &transform, const glm::vec3 &scale) {
+	const glm::vec3 pivot = meshExt.pivotOverride.hasValue() ? *meshExt.pivotOverride.value() : meshExt.pivot;
 	glm::vec3 pos;
 	if (meshExt.applyTransform) {
-		pos = transform.apply(v1.position, meshExt.pivot * meshExt.size);
+		pos = transform.apply(v1.position, pivot * meshExt.size);
 	} else {
 		pos = v1.position;
 	}

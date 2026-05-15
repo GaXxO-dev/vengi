@@ -169,7 +169,8 @@ bool FBXFormat::saveMeshesBinary(const ChunkMeshes &meshes, const core::String &
 				for (int j = 0; j < nv; ++j) {
 					glm::vec3 pos;
 					if (meshExt.applyTransform) {
-						pos = transform.apply(vertices[j].position, meshExt.pivot * meshExt.size);
+						const glm::vec3 pivot = meshExt.pivotOverride.hasValue() ? *meshExt.pivotOverride.value() : meshExt.pivot;
+						pos = transform.apply(vertices[j].position, pivot * meshExt.size);
 					} else {
 						pos = vertices[j].position;
 					}

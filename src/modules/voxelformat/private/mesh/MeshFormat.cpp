@@ -50,6 +50,17 @@ MeshFormat::MeshFormat() {
 	_paletteDistance = distanceMode == 1 ? color::Distance::HSB : color::Distance::Approximation;
 }
 
+glm::vec3 MeshFormat::pivotFromMode(PivotMode mode) {
+	switch (mode) {
+	case PivotMode::Center:
+		return {0.5f, 0.5f, 0.5f};
+	case PivotMode::BottomCenter:
+		return {0.5f, 0.0f, 0.5f};
+	default:
+		return {0.0f, 0.0f, 0.0f};
+	}
+}
+
 MeshFormat::ChunkMeshExt *MeshFormat::getParent(const scenegraph::SceneGraph &sceneGraph, MeshFormat::ChunkMeshes &meshes,
 										   int nodeId) {
 	if (!sceneGraph.hasNode(nodeId)) {
@@ -1217,12 +1228,15 @@ bool MeshFormat::saveGroups(const scenegraph::SceneGraph &sceneGraph, const core
 	const bool withTexCoords = core::getVar(cfg::VoxformatWithtexcoords)->boolVal();
 	const voxel::SurfaceExtractionType type =
 		(voxel::SurfaceExtractionType)core::getVar(cfg::VoxformatMeshMode)->intVal();
+	const PivotMode pivotMode = (PivotMode)core::getVar(cfg::VoxformatPivot)->intVal();
+	const core::Optional<glm::vec3> pivotOverride =
+		pivotMode != PivotMode::Corner ? core::Optional<glm::vec3>(pivotFromMode(pivotMode)) : core::Optional<glm::vec3>();
 
 	ChunkMeshes meshes;
 	meshes.resize(sceneGraph.nodes().size());
 	// TODO: VOXELFORMAT: this could get optimized by re-using the same mesh for multiple nodes (in case of reference
 	// nodes)
-	app::for_parallel(0, sceneGraph.nodes().size(), [&sceneGraph, type, &meshes] (int start, int end) {
+	app::for_parallel(0, sceneGraph.nodes().size(), [&sceneGraph, type, &meshes, pivotOverride] (int start, int end) {
 		const bool withNormals = core::getVar(cfg::VoxformatWithNormals)->boolVal();
 		const bool optimizeMesh = core::getVar(cfg::VoxformatOptimize)->boolVal();
 		const bool mergeQuads = core::getVar(cfg::VoxformatMergequads)->boolVal();
@@ -1249,6 +1263,9 @@ bool MeshFormat::saveGroups(const scenegraph::SceneGraph &sceneGraph, const core
 			}
 
 			meshes[i] = core::move(ChunkMeshExt(mesh, node, applyTransform));
+			if (pivotOverride.hasValue()) {
+				meshes[i].pivotOverride = pivotOverride;
+			}
 			if (!ctx.textureData.empty()) {
 				core::String texName = node.name();
 				if (texName.empty()) {

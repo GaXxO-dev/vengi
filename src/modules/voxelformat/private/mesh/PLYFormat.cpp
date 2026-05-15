@@ -745,8 +745,9 @@ bool PLYFormat::saveMeshes(const core::Map<int, int> &, const scenegraph::SceneG
 			for (int j = 0; j < nv; ++j) {
 				const voxel::VoxelVertex &v = vertices[j];
 				glm::vec3 pos;
+				const glm::vec3 pivot = meshExt.pivotOverride.hasValue() ? *meshExt.pivotOverride.value() : meshExt.pivot;
 				if (meshExt.applyTransform) {
-					pos = transform.apply(v.position, meshExt.pivot * meshExt.size);
+					pos = transform.apply(v.position, pivot * meshExt.size);
 				} else {
 					pos = v.position;
 				}

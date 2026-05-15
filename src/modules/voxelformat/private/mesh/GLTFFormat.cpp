@@ -773,7 +773,8 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 		const voxel::IndexType *indices = mesh->getRawIndexData();
 		const scenegraph::SceneGraphNode &graphNode = sceneGraph.node(meshExt.nodeId);
 		const palette::Palette &palette = graphNode.palette();
-		const glm::vec3 pivotOffset = glm::vec3(mesh->getOffset()) - meshExt.pivot * meshExt.size;
+		const glm::vec3 pivot = meshExt.pivotOverride.hasValue() ? *meshExt.pivotOverride.value() : meshExt.pivot;
+		const glm::vec3 pivotOffset = glm::vec3(mesh->getOffset()) - pivot * meshExt.size;
 
 		if (colorAsFloat) {
 			// Legacy interleaved layout: [pos.xyz color.rgba texcoord.uv] as float32

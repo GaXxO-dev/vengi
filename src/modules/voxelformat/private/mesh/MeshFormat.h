@@ -8,6 +8,7 @@
 #include "PosSampling.h"
 #include "color/Distance.h"
 #include "core/Common.h"
+#include "core/Optional.h"
 #include "core/UUID.h"
 #include "core/collection/DynamicArray.h"
 #include "core/collection/DynamicParallelMap.h"
@@ -41,6 +42,9 @@ using PosMap = core::DynamicParallelMap<int64_t, PosSampling, 3541, core::privdy
 class MeshFormat : public Format {
 public:
 	static constexpr const uint8_t FillColorIndex = 2;
+
+	enum class PivotMode { Corner = 0, Center = 1, BottomCenter = 2 };
+	static glm::vec3 pivotFromMode(PivotMode mode);
 
 	/**
 	 * Subdivide until we brought the triangles down to the size of 1 or smaller
@@ -94,6 +98,7 @@ protected:
 
 		glm::vec3 size{0.0f};
 		glm::vec3 pivot{0.0f};
+		core::Optional<glm::vec3> pivotOverride;
 		int nodeId = -1;
 
 		void visitByMaterial(int materialIndex, const std::function<void(const voxel::Mesh &, voxel::IndexType,
