@@ -765,7 +765,57 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 	bufferSize += perColorBufferSize;
 
 	// Allocate and fill buffer
+	// First pass: compute global AABB for scale normalization
 	uint8_t *buffer = (uint8_t *)core_malloc(bufferSize);
+
+	glm::vec3 globalMins(FLT_MAX, FLT_MAX, FLT_MAX);
+	glm::vec3 globalMaxs(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+	bool anyApplyTransform = false;
+	for (const MeshInfo &info : meshInfos) {
+		const ChunkMeshExt &meshExt = meshes[info.meshExtIdx];
+		if (meshExt.applyTransform) {
+			anyApplyTransform = true;
+		}
+		const voxel::Mesh *mesh = &meshExt.mesh->mesh[info.subMeshIdx];
+		const voxel::VoxelVertex *vertices = mesh->getRawVertexData();
+		const glm::vec3 pivot = meshExt.pivotOverride.hasValue() ? *meshExt.pivotOverride.value() : meshExt.pivot;
+		const glm::vec3 pivotOffset = glm::vec3(mesh->getOffset()) - pivot * meshExt.size;
+		for (int j = 0; j < info.vertexCount; ++j) {
+			glm::vec3 pos = vertices[j].position;
+			if (meshExt.applyTransform) {
+				pos += pivotOffset;
+			}
+			pos *= scale;
+			globalMins = glm::min(globalMins, pos);
+			globalMaxs = glm::max(globalMaxs, pos);
+		}
+	}
+	const glm::vec3 spans = globalMaxs - globalMins;
+	const float maxSpan = glm::max(spans.x, glm::max(spans.y, spans.z));
+	const PivotMode pivotMode = (PivotMode)core::getVar(cfg::VoxformatPivot)->intVal();
+	const bool normalize = maxSpan > 1.0f && anyApplyTransform && pivotMode != PivotMode::Corner;
+	float normalizeScale = 1.0f;
+	if (normalize) {
+		normalizeScale = 1.0f / maxSpan;
+	}
+
+	glm::vec3 pivotShift(0.0f);
+	if (anyApplyTransform) {
+		const glm::vec3 normMins = globalMins * normalizeScale;
+		const glm::vec3 normMaxs = globalMaxs * normalizeScale;
+		const glm::vec3 normCenter = (normMins + normMaxs) * 0.5f;
+		switch (pivotMode) {
+		case PivotMode::Center:
+			pivotShift = -normCenter;
+			break;
+		case PivotMode::BottomCenter:
+			pivotShift = glm::vec3(-normCenter.x, -normMins.y, -normCenter.z);
+			break;
+		default:
+			break;
+		}
+	}
+
 	for (const MeshInfo &info : meshInfos) {
 		const ChunkMeshExt &meshExt = meshes[info.meshExtIdx];
 		const voxel::Mesh *mesh = &meshExt.mesh->mesh[info.subMeshIdx];
@@ -775,6 +825,7 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 		const palette::Palette &palette = graphNode.palette();
 		const glm::vec3 pivot = meshExt.pivotOverride.hasValue() ? *meshExt.pivotOverride.value() : meshExt.pivot;
 		const glm::vec3 pivotOffset = glm::vec3(mesh->getOffset()) - pivot * meshExt.size;
+		const glm::vec3 combinedScale = scale * normalizeScale;
 
 		if (colorAsFloat) {
 			// Legacy interleaved layout: [pos.xyz color.rgba texcoord.uv] as float32
@@ -786,7 +837,8 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 				if (meshExt.applyTransform) {
 					pos += pivotOffset;
 				}
-				pos *= scale;
+				pos *= combinedScale;
+				pos += pivotShift;
 				int off = 0;
 				vBuf[j * stride + off++] = pos.x;
 				vBuf[j * stride + off++] = pos.y;
@@ -818,7 +870,8 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 				if (meshExt.applyTransform) {
 					pos += pivotOffset;
 				}
-				pos *= scale;
+				pos *= combinedScale;
+				pos += pivotShift;
 				posBuf[j * 3 + 0] = pos.x;
 				posBuf[j * 3 + 1] = pos.y;
 				posBuf[j * 3 + 2] = pos.z;
@@ -1664,7 +1717,7 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 		// Node
 		nodes[mi].mesh = &gltfMeshes[mi];
 		nodes[mi].name = (char *)meshes[info.meshExtIdx].name.c_str();
-		{
+		if (!meshes[info.meshExtIdx].applyTransform || !normalize) {
 			const scenegraph::SceneGraphNode &graphNode = sceneGraph.node(meshes[info.meshExtIdx].nodeId);
 			const scenegraph::SceneGraphTransform &transform = graphNode.transform(0);
 			glm::mat4x4 nodeLocalMatrix = transform.localMatrix();

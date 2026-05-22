@@ -38,13 +38,13 @@ TEST_F(GLTFFormatTest, testImportMeshAnimationCompare) {
 
 TEST_F(GLTFFormatTest, testSaveChrKnight) {
 	GLTFFormat format;
-	const voxel::ValidateFlags flags = (voxel::ValidateFlags::Mesh & ~voxel::ValidateFlags::Color & ~voxel::ValidateFlags::Pivot);
+	const voxel::ValidateFlags flags = (voxel::ValidateFlags::Mesh & ~voxel::ValidateFlags::Color & ~voxel::ValidateFlags::Pivot & ~voxel::ValidateFlags::Translation & ~voxel::ValidateFlags::Scale);
 	testSaveMesh("chr_knight.qbcl", "chr_knight.gltf", &format, flags);
 }
 
 TEST_F(GLTFFormatTest, testSaveCC) {
 	GLTFFormat format;
-	const voxel::ValidateFlags flags = (voxel::ValidateFlags::Mesh & ~voxel::ValidateFlags::Color & ~voxel::ValidateFlags::Pivot);
+	const voxel::ValidateFlags flags = (voxel::ValidateFlags::Mesh & ~voxel::ValidateFlags::Color & ~voxel::ValidateFlags::Pivot & ~voxel::ValidateFlags::Translation & ~voxel::ValidateFlags::Scale);
 	testSaveMesh("cc.vxl", "cc.gltf", &format, flags);
 }
 
@@ -87,6 +87,22 @@ TEST_F(GLTFFormatTest, testSaveLoadVoxel) {
 	GLTFFormat f;
 	const voxel::ValidateFlags flags = voxel::ValidateFlags::All & ~voxel::ValidateFlags::Palette;
 	testSaveLoadVoxel("bv-smallvolumesavetest.gltf", &f, 0, 10, flags);
+}
+
+TEST_F(GLTFFormatTest, testExportBottomCenterPivot) {
+	GLTFFormat format;
+	util::ScopedVarChange scopedPivot(cfg::VoxformatPivot, 2);
+	util::ScopedVarChange scopedVoxelSize(cfg::VoxformatVoxelSize, 12);
+	const voxel::ValidateFlags flags = (voxel::ValidateFlags::Mesh & ~voxel::ValidateFlags::Color & ~voxel::ValidateFlags::Pivot & ~voxel::ValidateFlags::Translation & ~voxel::ValidateFlags::Scale);
+	testSaveMesh("chr_knight.qbcl", "chr_knight_bottomcenter.gltf", &format, flags);
+}
+
+TEST_F(GLTFFormatTest, testExportCenterPivot) {
+	GLTFFormat format;
+	util::ScopedVarChange scopedPivot(cfg::VoxformatPivot, 1);
+	util::ScopedVarChange scopedVoxelSize(cfg::VoxformatVoxelSize, 12);
+	const voxel::ValidateFlags flags = (voxel::ValidateFlags::Mesh & ~voxel::ValidateFlags::Color & ~voxel::ValidateFlags::Pivot & ~voxel::ValidateFlags::Translation & ~voxel::ValidateFlags::Scale);
+	testSaveMesh("chr_knight.qbcl", "chr_knight_center.gltf", &format, flags);
 }
 
 TEST_F(GLTFFormatTest, testMaterial) {
