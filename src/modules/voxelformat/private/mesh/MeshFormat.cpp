@@ -1290,13 +1290,22 @@ bool MeshFormat::saveGroups(const scenegraph::SceneGraph &sceneGraph, const core
 		nonEmptyMeshes.emplace_back(*iter);
 		meshIdxNodeMap.put(iter->nodeId, (int)nonEmptyMeshes.size() - 1);
 	}
+	const float scaleUniform = core::getVar(cfg::VoxformatScale)->floatVal();
+	const float scaleX = core::getVar(cfg::VoxformatScaleX)->floatVal();
+	const float scaleY = core::getVar(cfg::VoxformatScaleY)->floatVal();
+	const float scaleZ = core::getVar(cfg::VoxformatScaleZ)->floatVal();
+	const glm::vec3 meshScale(
+		scaleX != 1.0f ? scaleX * scaleUniform : scaleUniform,
+		scaleY != 1.0f ? scaleY * scaleUniform : scaleUniform,
+		scaleZ != 1.0f ? scaleZ * scaleUniform : scaleUniform);
+
 	bool state;
 	if (nonEmptyMeshes.empty() && sceneGraph.empty(scenegraph::SceneGraphNodeType::Point)) {
 		Log::warn("Empty scene can't get saved as mesh");
 		state = false;
 	} else {
 		Log::debug("Save meshes");
-		state = saveMeshes(meshIdxNodeMap, sceneGraph, nonEmptyMeshes, filename, archive, {1.0f, 1.0f, 1.0f},
+		state = saveMeshes(meshIdxNodeMap, sceneGraph, nonEmptyMeshes, filename, archive, meshScale,
 						   type == voxel::SurfaceExtractionType::Cubic ? quads : false, withColor, withTexCoords);
 	}
 	for (ChunkMeshExt &meshext : meshes) {

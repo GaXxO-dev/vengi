@@ -118,6 +118,11 @@ bool FormatConfig::init() {
 	const core::VarDef voxformatPivot(cfg::VoxformatPivot, 0, 0, 2, N_("Pivot mode"),
 									  N_("0 = corner, 1 = center, 2 = bottom center"), core::CV_NOPERSIST);
 	core::registerVar(voxformatPivot);
+	const core::VarDef voxformatNormalize(cfg::VoxformatNormalize, false, N_("Normalize"),
+										  N_("Normalize vertex positions to fit within a unit cube when exporting mesh formats. "
+											 "When disabled, vertex positions preserve their original voxel-space coordinates."),
+										  core::CV_NOPERSIST);
+	core::registerVar(voxformatNormalize);
 	const core::VarDef voxformatOptimize(cfg::VoxformatOptimize, false, N_("Apply optimizations"),
 										 N_("Apply mesh optimization steps to meshes"), core::CV_NOPERSIST);
 	core::registerVar(voxformatOptimize);

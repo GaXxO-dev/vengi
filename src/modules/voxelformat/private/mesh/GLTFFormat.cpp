@@ -793,7 +793,8 @@ bool GLTFFormat::saveMeshes(const core::Map<int, int> &meshIdxNodeMap, const sce
 	const glm::vec3 spans = globalMaxs - globalMins;
 	const float maxSpan = glm::max(spans.x, glm::max(spans.y, spans.z));
 	const PivotMode pivotMode = (PivotMode)core::getVar(cfg::VoxformatPivot)->intVal();
-	const bool normalize = maxSpan > 1.0f && anyApplyTransform && pivotMode != PivotMode::Corner;
+	const bool normalizeEnabled = core::getVar(cfg::VoxformatNormalize)->boolVal();
+	const bool normalize = normalizeEnabled && maxSpan > 1.0f && anyApplyTransform && pivotMode != PivotMode::Corner;
 	float normalizeScale = 1.0f;
 	if (normalize) {
 		normalizeScale = 1.0f / maxSpan;
